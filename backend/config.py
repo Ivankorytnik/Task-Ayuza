@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 ENV_NAME = "TASK_AYUZA_DATABASE_URL"
 
@@ -19,6 +20,6 @@ def database_url() -> str:
         url = make_url(raw)
         if url.drivername != "postgresql+psycopg" or not url.host or not url.database or not url.username:
             raise ValueError("unsupported or incomplete URL")
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, ArgumentError):
         raise ConfigurationError("Invalid PostgreSQL database configuration") from None
     return raw
