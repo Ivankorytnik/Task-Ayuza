@@ -1,0 +1,9 @@
+-- Run only in the same isolated task_ayuza_test DB after manual Alembic upgrade.
+-- Applied by the test DB administrator, not by the runtime application.
+GRANT SELECT, INSERT, UPDATE ON task_ayuza.organization TO task_ayuza_runtime;
+GRANT SELECT, INSERT ON task_ayuza.audit_events TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.alembic_version TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.organization, task_ayuza.audit_events TO task_ayuza_backup;
+-- No owner privileges, TRUNCATE, UPDATE/DELETE on audit, or grants on Alembic writes.
+REVOKE UPDATE, DELETE, TRUNCATE ON task_ayuza.audit_events FROM task_ayuza_runtime, task_ayuza_backup, PUBLIC;
+REVOKE UPDATE, INSERT, DELETE, TRUNCATE ON task_ayuza.alembic_version FROM task_ayuza_runtime, task_ayuza_backup, PUBLIC;
