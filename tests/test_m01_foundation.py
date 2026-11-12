@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from unittest.mock import patch
 
 import pytest
@@ -81,6 +82,9 @@ def test_a04_runtime_cannot_ddl_or_change_revision(runtime_engine):
         "DROP TABLE task_ayuza.audit_events",
         "UPDATE task_ayuza.alembic_version SET version_num='wrong'",
         "SET ROLE task_ayuza_migrator",
+        "SET ROLE task_ayuza_backup",
+        "CREATE TABLE public.forbidden (id int)",
+        "CREATE TEMP TABLE forbidden (id int)",
     )
     for stmt in statements:
         with runtime_engine.connect() as conn:
@@ -120,10 +124,10 @@ def test_a05_a08_audit_insert_is_append_only(runtime_engine):
 
 def test_a06_atomicity_when_audit_fails(runtime_engine):
     from sqlalchemy.orm import Session
-    with pytest.raises(IntegrityError):
+    with pytest.raises(IntegrityError) as error:
         with Session(runtime_engine) as session, session.begin():
             create_organization(session, name="Synthetic rollback", request_id=uuid.uuid4())
-            # Wrong kind/name for the audit; the database rejects it during flush.
+            # The explicit forbidden snapshot must cause the rollback.
             record_organization_event(
                 session, organization_id=uuid.uuid4(), action="organization.created",
                 request_id=uuid.uuid4(), old=None, new={"name": "Synthetic"},
@@ -134,25 +138,31 @@ def test_a06_atomicity_when_audit_fails(runtime_engine):
                 VALUES (:id, 'system', 'organization', :entity_id,
                         'organization.created', :request_id, '{"password":"bad"}'::jsonb)
             """), {"id": uuid.uuid4(), "entity_id": uuid.uuid4(), "request_id": uuid.uuid4()})
+    assert error.value.orig.diag.constraint_name == "ck_audit_new_allowlist"
     with runtime_engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM task_ayuza.organization")).scalar_one() == 0
+        assert conn.execute(text("SELECT count(*) FROM task_ayuza.audit_events WHERE \"new\"->>'name' = 'Synthetic rollback'")).scalar_one() == 0
 
 
 def test_a07_singleton_concurrent(runtime_engine):
     from sqlalchemy.orm import Session
+    barrier = Barrier(2)
     def insert_org(_):
         try:
             with Session(runtime_engine) as session, session.begin():
+                session.connection()
+                barrier.wait(timeout=10)
                 create_organization(session, name="Synthetic winner", request_id=uuid.uuid4())
             return "committed"
-        except IntegrityError:
+        except IntegrityError as error:
+            assert error.orig.diag.constraint_name == "organization_singleton_key_key"
             return "conflict"
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(insert_org, range(2)))
     assert sorted(results) == ["committed", "conflict"]
     with runtime_engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM task_ayuza.organization")).scalar_one() == 1
-        assert conn.execute(text("SELECT count(*) FROM task_ayuza.audit_events WHERE action='organization.created'")).scalar_one() >= 1
+        assert conn.execute(text("SELECT count(*) FROM task_ayuza.audit_events WHERE \"new\"->>'name' = 'Synthetic winner'")).scalar_one() == 1
 
 
 def test_a09_backup_read_only(runtime_engine):
@@ -179,3 +189,4 @@ def test_a10_static_metadata():
         "audit_events", "organization"
     ]
     assert all(table.schema == "task_ayuza" for table in Base.metadata.tables.values())
+

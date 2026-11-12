@@ -1,6 +1,18 @@
 # M01.1 | Test-only PostgreSQL runbook
 
-**Status:** code submitted for review; A01–A09 require an actual, new, disposable PostgreSQL. No production, no auto-migration.
+**Status:** M01.1 verified on PostgreSQL 17.11 / Python 3.13.5 on 12.11.2026; see [actual results](M01-1-RESULTS.md). Ready for independent review, not merged or deployed.
+
+## Reproducible disposable-cluster acceptance
+
+After installing requirements-m01.txt and PostgreSQL binaries, explicitly run:
+
+```bash
+python tests/run_m01_acceptance.py --pg-bin /path/to/postgresql/17/bin
+```
+
+The runner creates a new temporary cluster, binds only 127.0.0.1 (default port 55439), generates test-only credentials, manually runs migrations, tests actual ASGI startup and invalid revisions, checks effective privileges and runs the integration suite. It stops and removes the cluster afterwards. It does not reuse inherited database connection variables. A10 additionally requires source/diff review. An occupied port causes failure, not connection to an existing server.
+
+The manual alternative below remains available.
 
 ## Environment
 - Python 3.13; pinned free/open-source Python dependencies in `requirements-m01.txt`. Check actual PostgreSQL/driver compatibility and package licenses in an environment with network access.
@@ -23,3 +35,4 @@
 - DB owners, superusers and privileged OS administrators are outside runtime append-only protection.
 - Audit can be bypassed by untrusted direct DB writes to organization; only trusted internal service operations are in scope in M01.1. In M01.2+ require all mutations to pass service/transaction audit, and consider database enforcement if direct DML can occur.
 - The test-only role scripts assume default PostgreSQL behavior for PUBLIC and fresh dedicated DB. Verify effective privileges against actual cluster.
+

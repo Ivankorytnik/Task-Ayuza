@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, text
+from sqlalchemy import CheckConstraint, DateTime, Index, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -66,5 +66,6 @@ class AuditEvent(Base):
     action: Mapped[str] = mapped_column(String(60), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
     request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    old: Mapped[dict | None] = mapped_column("old", JSONB)
-    new: Mapped[dict | None] = mapped_column("new", JSONB)
+    old: Mapped[dict | None] = mapped_column("old", JSONB(none_as_null=True))
+    new: Mapped[dict | None] = mapped_column("new", JSONB(none_as_null=True))
+
