@@ -6,6 +6,8 @@ No automatic DB provisioning, migrations, seed or cleanup of actual data.
 from __future__ import annotations
 
 import os
+import traceback
+from types import SimpleNamespace
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
@@ -16,7 +18,8 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from backend.audit import create_organization, record_organization_event
+from backend.audit import (OrganizationAlreadyExistsError, _safe_snapshot,
+                           create_organization, record_organization_event)
 from backend.config import ConfigurationError, database_url
 from backend.db import SchemaVersionError, verify_schema
 from backend.models import Base
@@ -60,6 +63,46 @@ def test_a08_snapshot_filter_unit():
         _safe_snapshot({"name": "Allowed", "token": "secret"})
 
 
+@pytest.mark.parametrize("field", ["old", "new"])
+@pytest.mark.parametrize("snapshot", ["{}", '{"name":null}', '{"name":""}'])
+def test_a08_invalid_snapshot_db_and_python(runtime_engine, field, snapshot):
+    import json
+    with pytest.raises(ValueError):
+        _safe_snapshot(json.loads(snapshot))
+    with runtime_engine.connect() as conn:
+        with pytest.raises(IntegrityError) as error:
+            conn.execute(text(f"""
+                INSERT INTO task_ayuza.audit_events
+                    (id, actor_kind, entity_kind, entity_id, action, request_id, "{field}")
+                VALUES (:id, 'system', 'organization', :entity_id,
+                        'organization.created', :request_id, CAST(:snapshot AS jsonb))
+            """), {"id": uuid.uuid4(), "entity_id": uuid.uuid4(),
+                   "request_id": uuid.uuid4(), "snapshot": snapshot})
+        assert error.value.orig.sqlstate == "23514"
+        assert error.value.orig.diag.constraint_name == f"ck_audit_{field}_allowlist"
+        conn.rollback()
+
+
+@pytest.mark.parametrize("overrides", [
+    {"sqlstate": "23514"}, {"constraint_name": "organization_pkey"},
+    {"schema_name": "other"}, {"table_name": "other"},
+])
+def test_a07_unrelated_integrity_errors_propagate(overrides):
+    from unittest.mock import Mock
+    details = dict(sqlstate="23505", constraint_name="organization_singleton_key_key",
+                   schema_name="task_ayuza", table_name="organization")
+    details.update(overrides)
+    original = Exception("synthetic unrelated database failure")
+    original.sqlstate = details.pop("sqlstate")
+    original.diag = SimpleNamespace(**details)
+    error = IntegrityError("synthetic SQL", {}, original)
+    session = Mock()
+    session.flush.side_effect = error
+    with pytest.raises(IntegrityError) as caught:
+        create_organization(session, name="Synthetic", request_id=uuid.uuid4())
+    assert caught.value is error
+
+
 def test_a02_schema_check_is_read_only(runtime_engine):
     inspector = inspect(runtime_engine)
     assert set(inspector.get_table_names(schema="task_ayuza")) == {
@@ -88,8 +131,9 @@ def test_a04_runtime_cannot_ddl_or_change_revision(runtime_engine):
     )
     for stmt in statements:
         with runtime_engine.connect() as conn:
-            with pytest.raises(DBAPIError):
+            with pytest.raises(DBAPIError) as error:
                 conn.execute(text(stmt))
+            assert error.value.orig.sqlstate == "42501"
             conn.rollback()
 
 
@@ -109,17 +153,20 @@ def test_a05_a08_audit_insert_is_append_only(runtime_engine):
     )
     for stmt in attempts:
         with runtime_engine.connect() as conn:
-            with pytest.raises(DBAPIError):
+            with pytest.raises(DBAPIError) as error:
                 conn.execute(text(stmt))
+            assert error.value.orig.sqlstate == "42501"
             conn.rollback()
     with runtime_engine.connect() as conn:
-        with pytest.raises(DBAPIError):
+        with pytest.raises(IntegrityError) as error:
             conn.execute(text("""
                 INSERT INTO task_ayuza.audit_events
                     (id, actor_kind, entity_kind, entity_id, action, request_id, "new")
                 VALUES (:id, 'system', 'organization', :entity_id,
                         'organization.created', :request_id, '{"token":"secret"}'::jsonb)
             """), {"id": uuid.uuid4(), "entity_id": uuid.uuid4(), "request_id": uuid.uuid4()})
+        assert error.value.orig.sqlstate == "23514"
+        assert error.value.orig.diag.constraint_name == "ck_audit_new_allowlist"
 
 
 def test_a06_atomicity_when_audit_fails(runtime_engine):
@@ -139,6 +186,7 @@ def test_a06_atomicity_when_audit_fails(runtime_engine):
                         'organization.created', :request_id, '{"password":"bad"}'::jsonb)
             """), {"id": uuid.uuid4(), "entity_id": uuid.uuid4(), "request_id": uuid.uuid4()})
     assert error.value.orig.diag.constraint_name == "ck_audit_new_allowlist"
+    assert error.value.orig.sqlstate == "23514"
     with runtime_engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM task_ayuza.organization")).scalar_one() == 0
         assert conn.execute(text("SELECT count(*) FROM task_ayuza.audit_events WHERE \"new\"->>'name' = 'Synthetic rollback'")).scalar_one() == 0
@@ -147,15 +195,19 @@ def test_a06_atomicity_when_audit_fails(runtime_engine):
 def test_a07_singleton_concurrent(runtime_engine):
     from sqlalchemy.orm import Session
     barrier = Barrier(2)
+    winner_name = "Synthetic winner"
     def insert_org(_):
         try:
             with Session(runtime_engine) as session, session.begin():
                 session.connection()
                 barrier.wait(timeout=10)
-                create_organization(session, name="Synthetic winner", request_id=uuid.uuid4())
+                create_organization(session, name=winner_name, request_id=uuid.uuid4())
             return "committed"
-        except IntegrityError as error:
-            assert error.orig.diag.constraint_name == "organization_singleton_key_key"
+        except OrganizationAlreadyExistsError as error:
+            assert str(error) == "Organization already exists"
+            rendered = traceback.format_exc()
+            assert "INSERT INTO" not in rendered
+            assert winner_name not in rendered
             return "conflict"
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(insert_org, range(2)))
@@ -163,6 +215,13 @@ def test_a07_singleton_concurrent(runtime_engine):
     with runtime_engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM task_ayuza.organization")).scalar_one() == 1
         assert conn.execute(text("SELECT count(*) FROM task_ayuza.audit_events WHERE \"new\"->>'name' = 'Synthetic winner'")).scalar_one() == 1
+    # A later repeated call gets the same safe service conflict and no extra event.
+    with pytest.raises(OrganizationAlreadyExistsError, match="^Organization already exists$"):
+        with Session(runtime_engine) as session, session.begin():
+            create_organization(session, name="Synthetic duplicate", request_id=uuid.uuid4())
+    with runtime_engine.connect() as conn:
+        assert conn.execute(text("SELECT name FROM task_ayuza.organization")).scalar_one() == "Synthetic winner"
+        assert conn.execute(text("SELECT count(*) FROM task_ayuza.audit_events WHERE \"new\"->>'name' = 'Synthetic duplicate'")).scalar_one() == 0
 
 
 def test_a09_backup_read_only(runtime_engine):
@@ -177,8 +236,9 @@ def test_a09_backup_read_only(runtime_engine):
             "CREATE TABLE task_ayuza.forbidden_backup (id int)",
         ):
             with backup_engine.connect() as conn:
-                with pytest.raises(DBAPIError):
+                with pytest.raises(DBAPIError) as error:
                     conn.execute(text(stmt))
+                assert error.value.orig.sqlstate == "42501"
                 conn.rollback()
     finally:
         backup_engine.dispose()
@@ -189,4 +249,5 @@ def test_a10_static_metadata():
         "audit_events", "organization"
     ]
     assert all(table.schema == "task_ayuza" for table in Base.metadata.tables.values())
+
 

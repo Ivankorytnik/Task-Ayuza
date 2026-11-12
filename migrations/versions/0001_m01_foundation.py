@@ -53,6 +53,7 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             '"old" IS NULL OR (jsonb_typeof("old") = \'object\' AND '
+            '"old" ? \'name\' AND '
             '("old" - \'name\') = \'{}\'::jsonb AND '
             'jsonb_typeof("old"->\'name\') = \'string\' AND '
             'length("old"->>\'name\') BETWEEN 1 AND 200)',
@@ -60,6 +61,7 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             '"new" IS NULL OR (jsonb_typeof("new") = \'object\' AND '
+            '"new" ? \'name\' AND '
             '("new" - \'name\') = \'{}\'::jsonb AND '
             'jsonb_typeof("new"->\'name\') = \'string\' AND '
             'length("new"->>\'name\') BETWEEN 1 AND 200)',
@@ -76,3 +78,4 @@ def downgrade() -> None:
     op.drop_index("ix_audit_occurred", table_name="audit_events", schema=SCHEMA)
     op.drop_table("audit_events", schema=SCHEMA)
     op.drop_table("organization", schema=SCHEMA)
+

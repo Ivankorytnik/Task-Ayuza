@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import uuid
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.models import AuditEvent, Organization
 
 ALLOWED_SNAPSHOT_FIELDS = frozenset({"name"})
+
+
+class OrganizationAlreadyExistsError(Exception):
+    """Safe service conflict; caller must roll back the transaction."""
 
 
 def _safe_snapshot(values: dict | None) -> dict | None:
@@ -49,10 +54,20 @@ def create_organization(session: Session, *, name: str, request_id: uuid.UUID) -
         raise ValueError("Invalid organization name")
     organization = Organization(name=name)
     session.add(organization)
-    session.flush()
+    try:
+        session.flush()
+    except IntegrityError as error:
+        diagnostic = getattr(error.orig, "diag", None)
+        if (getattr(error.orig, "sqlstate", None) == "23505"
+                and getattr(diagnostic, "schema_name", None) == "task_ayuza"
+                and getattr(diagnostic, "table_name", None) == "organization"
+                and getattr(diagnostic, "constraint_name", None) == "organization_singleton_key_key"):
+            raise OrganizationAlreadyExistsError("Organization already exists") from None
+        raise
     record_organization_event(
         session, organization_id=organization.id, action="organization.created",
         request_id=request_id, old=None, new={"name": name},
     )
     session.flush()
     return organization
+

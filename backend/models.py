@@ -41,6 +41,7 @@ class AuditEvent(Base):
         ),
         CheckConstraint(
             '"old" IS NULL OR (jsonb_typeof("old") = \'object\' AND '
+            '"old" ? \'name\' AND '
             '("old" - \'name\') = \'{}\'::jsonb AND '
             'jsonb_typeof("old"->\'name\') = \'string\' AND '
             'length("old"->>\'name\') BETWEEN 1 AND 200)',
@@ -48,6 +49,7 @@ class AuditEvent(Base):
         ),
         CheckConstraint(
             '"new" IS NULL OR (jsonb_typeof("new") = \'object\' AND '
+            '"new" ? \'name\' AND '
             '("new" - \'name\') = \'{}\'::jsonb AND '
             'jsonb_typeof("new"->\'name\') = \'string\' AND '
             'length("new"->>\'name\') BETWEEN 1 AND 200)',
@@ -68,4 +70,5 @@ class AuditEvent(Base):
     request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     old: Mapped[dict | None] = mapped_column("old", JSONB(none_as_null=True))
     new: Mapped[dict | None] = mapped_column("new", JSONB(none_as_null=True))
+
 
