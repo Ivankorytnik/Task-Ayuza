@@ -12,7 +12,7 @@ class SchemaVersionError(RuntimeError):
     pass
 
 
-REQUIRED_REVISION = "0001_m01_foundation"
+REQUIRED_REVISION = "0002_m01_auth"
 
 
 def make_engine(url: str | None = None) -> Engine:
@@ -34,3 +34,4 @@ def verify_schema(engine: Engine) -> None:
         raise SchemaVersionError("PostgreSQL schema is unavailable or uninitialized") from None
     if revisions != [REQUIRED_REVISION]:
         raise SchemaVersionError("PostgreSQL schema revision is incompatible")
+

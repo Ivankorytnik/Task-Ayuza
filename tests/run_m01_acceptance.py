@@ -79,7 +79,7 @@ def main():
                     return subprocess.run([sys.executable, '-m', 'alembic', *params],
                         env=migration_env, check=True, capture_output=True, text=True)
                 heads = alembic('heads').stdout.strip()
-                assert heads == '0001_m01_foundation (head)'
+                assert heads == '0002_m01_auth (head)'
                 alembic('upgrade', 'head')
                 engine = create_engine(urls['migrator'], hide_parameters=True)
                 def snapshot():
@@ -94,15 +94,17 @@ def main():
                 before = repr(snapshot())
                 alembic('upgrade', 'head')
                 assert before == repr(snapshot())
-                assert snapshot()[:2] == (['alembic_version', 'audit_events', 'organization'], [1, 0, 0])
+                assert snapshot()[:2] == (['alembic_version', 'audit_events', 'login_attempts', 'organization', 'sessions', 'users'], [1, 0, 0, 0, 0, 0])
                 with engine.connect() as c:
-                    assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0001_m01_foundation'
+                    assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0002_m01_auth'
                     assert compare_metadata(MigrationContext.configure(c, opts={'include_schemas': True, 'version_table_schema': 'task_ayuza'}), Base.metadata) == []
                 conn.execute(Path('scripts/grant-test.sql').read_text())
                 print('A01 PASS: one head; empty tables; repeated upgrade unchanged; metadata matches', flush=True)
 
                 async def startup(url):
                     os.environ['TASK_AYUZA_DATABASE_URL'] = url
+                    os.environ['TASK_AYUZA_ORIGIN'] = 'https://test.local'
+                    os.environ['TASK_AYUZA_AUTH_HMAC_KEY'] = secrets.token_hex(32)
                     async with lifespan(app):
                         pass
                 before = repr(snapshot())
@@ -159,15 +161,17 @@ def main():
                     assert not c.execute(text("SELECT pg_has_role(current_user,'task_ayuza_migrator','MEMBER') OR pg_has_role(current_user,'task_ayuza_backup','MEMBER')")).scalar_one()
                 runtime.dispose()
                 test_env = dict(env, TASK_AYUZA_DATABASE_URL=urls['runtime'],
-                    TASK_AYUZA_TEST_RUNTIME_URL=urls['runtime'], TASK_AYUZA_TEST_BACKUP_URL=urls['backup'])
-                subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/test_m01_foundation.py', '--tb=short'], env=test_env, check=True)
+                    TASK_AYUZA_TEST_RUNTIME_URL=urls['runtime'], TASK_AYUZA_TEST_BACKUP_URL=urls['backup'], TASK_AYUZA_TEST_MIGRATOR_URL=urls['migrator'], TASK_AYUZA_ORIGIN='https://test.local', TASK_AYUZA_AUTH_HMAC_KEY=secrets.token_hex(32))
+                subprocess.run([sys.executable, '-m', 'pytest', '-q', '-s', 'tests/test_m01_foundation.py', 'tests/test_m01_auth.py', '--tb=short'], env=test_env, check=True)
                 engine.dispose()
                 print('A04-A09 PASS: effective ACL and integration suite; no skipped tests', flush=True)
         finally:
             os.environ.pop('TASK_AYUZA_DATABASE_URL', None)
             pg('pg_ctl', '-D', data, '-m', 'fast', '-w', 'stop')
+            print('Disposable cluster stopped; temporary directory cleanup follows.', flush=True)
     print('Disposable cluster stopped and removed. A10 requires source/diff review.', flush=True)
 
 
 if __name__ == '__main__':
     main()
+

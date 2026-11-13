@@ -106,7 +106,7 @@ def test_a07_unrelated_integrity_errors_propagate(overrides):
 def test_a02_schema_check_is_read_only(runtime_engine):
     inspector = inspect(runtime_engine)
     assert set(inspector.get_table_names(schema="task_ayuza")) == {
-        "organization", "audit_events", "alembic_version"
+        "organization", "audit_events", "alembic_version", "users", "sessions", "login_attempts"
     }
     with runtime_engine.connect() as connection:
         before = [connection.execute(text(f"SELECT count(*) FROM task_ayuza.{table}")).scalar_one()
@@ -246,8 +246,9 @@ def test_a09_backup_read_only(runtime_engine):
 
 def test_a10_static_metadata():
     assert sorted(table.name for table in Base.metadata.tables.values()) == [
-        "audit_events", "organization"
+        "audit_events", "login_attempts", "organization", "sessions", "users"
     ]
     assert all(table.schema == "task_ayuza" for table in Base.metadata.tables.values())
+
 
 
