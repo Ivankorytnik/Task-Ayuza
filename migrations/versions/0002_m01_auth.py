@@ -57,6 +57,20 @@ def upgrade():
     CREATE INDEX ix_attempts_login ON task_ayuza.login_attempts(login_key, attempted_at);
     CREATE INDEX ix_attempts_ip ON task_ayuza.login_attempts(ip_key, attempted_at);
     CREATE INDEX ix_attempts_time ON task_ayuza.login_attempts(attempted_at);
+    CREATE TABLE task_ayuza.prelogin_limits (
+        ip_key bytea PRIMARY KEY CHECK (octet_length(ip_key)=32),
+        window_start timestamptz NOT NULL,
+        issued_count bigint NOT NULL CHECK (issued_count BETWEEN 1 AND 30),
+        updated_at timestamptz NOT NULL
+    );
+    CREATE INDEX ix_prelogin_limits_updated ON task_ayuza.prelogin_limits(updated_at);
+    CREATE TABLE task_ayuza.auth_limit_events (
+        key_kind varchar(8) NOT NULL CHECK (key_kind IN ('login','ip')),
+        key_hash bytea NOT NULL CHECK (octet_length(key_hash)=32),
+        last_event_at timestamptz NOT NULL,
+        PRIMARY KEY(key_kind,key_hash)
+    );
+    CREATE INDEX ix_auth_limit_events_time ON task_ayuza.auth_limit_events(last_event_at);
     ALTER TABLE task_ayuza.audit_events DROP CONSTRAINT ck_audit_scope_m01;
     ALTER TABLE task_ayuza.audit_events ADD CONSTRAINT ck_audit_scope_m01 CHECK (
         (entity_kind = 'organization' AND action IN ('organization.created','organization.updated')) OR

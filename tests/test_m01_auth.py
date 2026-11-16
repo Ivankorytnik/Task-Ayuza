@@ -41,7 +41,7 @@ def user(service):
 
 
 def login(service,name,pw,ip='192.0.2.1'):
-    pre=service.prelogin()
+    pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
     return service.login(name,pw,ip,pre['token'],pre['csrf_token'])
 
 
@@ -135,7 +135,7 @@ def test_session_deadlines_renewal_logout_and_no_raw_secrets(service):
 def test_expiry(service,kind):
     uid,name,pw=user(service)
     if kind=='prelogin':
-        s=service.prelogin()
+        s=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
     else:
         s=login(service,name,pw)
         if kind!='temporary':
@@ -179,6 +179,11 @@ def test_limiter_concurrent_and_persistent(service):
     with ThreadPoolExecutor(max_workers=12) as pool:
         results=list(pool.map(attempt,range(12)))
     assert sum(results)==5
+    with service.engine.connect() as c:
+        assert execute(c,"SELECT count(*) FROM task_ayuza.audit_events WHERE action='auth.login_limited' AND request_id IS NOT NULL").scalar_one() >= 1
+        marker=one(c,"SELECT last_event_at FROM task_ayuza.auth_limit_events WHERE key_kind='login' AND key_hash=:key",
+                   key=service.key('login',name))
+        assert marker is not None
     other=AuthService(service.engine,service.hmac_key)
     rejected(lambda:other.reserve(name,'198.51.100.2',uuid.uuid4()),429)
     with create_engine(_test_url('TASK_AYUZA_TEST_MIGRATOR_URL'),hide_parameters=True).begin() as c:
@@ -193,7 +198,7 @@ def test_limiter_concurrent_and_persistent(service):
 def test_login_normalization_and_no_success_reset(service):
     uid,name,pw=user(service)
     for i in range(5): login(service,' '+name.upper()+' ',pw,'203.0.113.2')
-    pre=service.prelogin()
+    pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
     with patch('backend.auth.verify',side_effect=AssertionError('Argon must not execute')):
         rejected(lambda:service.login(name,pw,'203.0.113.3',pre['token'],pre['csrf_token']),429)
 
@@ -223,7 +228,7 @@ def race_users(service,functions):
 @pytest.mark.parametrize('action',['reset','deactivate'])
 def test_race_login_against_invalidation(service,action):
     uid,name,pw=user(service)
-    pre=service.prelogin()
+    pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
     change=service.reset_password if action=='reset' else service.deactivate
     results=race_users(service,[lambda:service.login(name,pw,'203.0.113.4',pre['token'],pre['csrf_token']),lambda:change(uid)])
     if isinstance(results[0],dict):rejected(lambda:service.me(results[0]['token']))
@@ -304,7 +309,7 @@ def test_retry_rollback_and_limit(service):
 
 
 def test_cleanup_preserves_audit(service):
-    pre=service.prelogin();name='cleanup_'+uuid.uuid4().hex
+    pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10));name='cleanup_'+uuid.uuid4().hex
     service.reserve(name,'203.0.113.5',uuid.uuid4())
     with create_engine(_test_url('TASK_AYUZA_TEST_MIGRATOR_URL'),hide_parameters=True).begin() as c:
         audit=execute(c,'SELECT count(*) FROM task_ayuza.audit_events').scalar_one()
@@ -370,7 +375,7 @@ def test_renew_cannot_exceed_absolute_or_resurrect_idle(service):
 
 
 def test_prelogin_destroyed_and_all_mutations_require_csrf(service):
-    uid,name,pw=user(service);pre=service.prelogin()
+    uid,name,pw=user(service);pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
     s=service.login(name,pw,'192.0.2.91',pre['token'],pre['csrf_token'])
     with service.engine.connect() as c:
         assert not one(c,'SELECT id FROM task_ayuza.sessions WHERE id=:id',id=pre['session_id'])
@@ -382,7 +387,7 @@ def test_prelogin_destroyed_and_all_mutations_require_csrf(service):
 
 
 def test_login_and_creation_rollback_when_audit_denied(service):
-    uid,name,pw=user(service);pre=service.prelogin()
+    uid,name,pw=user(service);pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
     with service.engine.connect() as c:
         users=execute(c,'SELECT count(*) FROM task_ayuza.users').scalar_one()
         sessions=execute(c,'SELECT count(*) FROM task_ayuza.sessions').scalar_one()
@@ -435,6 +440,65 @@ def test_parallel_ip_limit(service):
             assert e.status==429;return False
     with ThreadPoolExecutor(max_workers=10) as pool:results=list(pool.map(work,range(10)))
     assert sum(results)==5
+
+
+def test_prelogin_abuse_concurrency_and_csrf_reload(service):
+    ip='203.0.113.220'
+    barrier=Barrier(40)
+    def get_pre(i):
+        barrier.wait(timeout=20)
+        try:return service.prelogin(ip=ip)
+        except AuthError as e:
+            assert e.status==429
+            return None
+    with ThreadPoolExecutor(max_workers=40) as pool:
+        results=list(pool.map(get_pre,range(40)))
+    assert sum(r is not None for r in results)==30
+    with service.engine.connect() as c:
+        assert execute(c,"SELECT count(*) FROM task_ayuza.prelogin_limits WHERE ip_key=:key",
+                       key=service.key('prelogin-ip',ip)).scalar_one()==1
+        assert execute(c,"SELECT issued_count FROM task_ayuza.prelogin_limits WHERE ip_key=:key",
+                       key=service.key('prelogin-ip',ip)).scalar_one()==30
+    rejected(lambda:service.prelogin(ip=ip),429)
+    # Reuse does not count as an issuance.
+    first=next(r for r in results if r)
+    refreshed=service.prelogin(ip=ip,token=first['token'])
+    assert refreshed['session_id']==first['session_id']
+    assert refreshed['csrf_token']!=first['csrf_token']
+
+    uid,name,s=normal(service)
+    with service.engine.connect() as c:
+        before=one(c,"SELECT * FROM task_ayuza.sessions WHERE id=:id",id=s['session_id'])
+    again=service.prelogin(ip=ip,token=s['token'])
+    assert again['token']==s['token'] and again['session_id']==s['session_id']
+    assert again['csrf_token']!=s['csrf_token']
+    with service.engine.connect() as c:
+        after=one(c,"SELECT * FROM task_ayuza.sessions WHERE id=:id",id=s['session_id'])
+    assert before['expires_at']==after['expires_at']
+    assert before['absolute_expires_at']==after['absolute_expires_at']
+    rejected(lambda:service.renew(s['token'],s['csrf_token']),403)
+    service.renew(s['token'],again['csrf_token'])
+
+
+def test_limited_audit_bounded_and_cleanup(service):
+    name='audit-'+uuid.uuid4().hex
+    ip='198.51.100.221'
+    for _ in range(5):service.reserve(name,ip,uuid.uuid4())
+    for _ in range(50):
+        rejected(lambda:service.reserve(name,ip,uuid.uuid4()),429)
+    with service.engine.connect() as c:
+        assert execute(c,"SELECT count(*) FROM task_ayuza.auth_limit_events WHERE key_kind='login' AND key_hash=:key",
+                       key=service.key('login',name)).scalar_one()==1
+    # A second key is independently recorded.
+    for _ in range(5):service.reserve(name+'x',ip,uuid.uuid4())
+    rejected(lambda:service.reserve(name+'x',ip,uuid.uuid4()),429)
+    with create_engine(_test_url('TASK_AYUZA_TEST_MIGRATOR_URL'),hide_parameters=True).begin() as c:
+        execute(c,"UPDATE task_ayuza.auth_limit_events SET last_event_at=last_event_at-interval '26 hours' WHERE key_hash=:key",
+                key=service.key('login',name))
+    service.cleanup()
+    with service.engine.connect() as c:
+        assert execute(c,"SELECT count(*) FROM task_ayuza.auth_limit_events WHERE key_kind='login' AND key_hash=:key",
+                       key=service.key('login',name)).scalar_one()==0
 
 
 def test_database_auth_constraints_and_runtime_limiter_permissions(service):

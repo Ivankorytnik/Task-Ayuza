@@ -94,7 +94,7 @@ def main():
                 before = repr(snapshot())
                 alembic('upgrade', 'head')
                 assert before == repr(snapshot())
-                assert snapshot()[:2] == (['alembic_version', 'audit_events', 'login_attempts', 'organization', 'sessions', 'users'], [1, 0, 0, 0, 0, 0])
+                assert snapshot()[:2] == (['alembic_version', 'audit_events', 'auth_limit_events', 'login_attempts', 'organization', 'prelogin_limits', 'sessions', 'users'], [1, 0, 0, 0, 0, 0, 0, 0])
                 with engine.connect() as c:
                     assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0002_m01_auth'
                     assert compare_metadata(MigrationContext.configure(c, opts={'include_schemas': True, 'version_table_schema': 'task_ayuza'}), Base.metadata) == []

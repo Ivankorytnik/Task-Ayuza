@@ -67,7 +67,8 @@ class PasswordInput(BaseModel):
 def prelogin(request: Request,response: Response):
     # Same-origin check required even for bootstrap. Caller sends Referer/Origin.
     verify_origin(request)
-    return issued(response,request.app.state.auth.prelogin())
+    ip = request.client.host if request.client else ''
+    return issued(response,request.app.state.auth.prelogin(ip=ip, token=request.cookies.get(COOKIE)))
 
 
 @router.post('/login')

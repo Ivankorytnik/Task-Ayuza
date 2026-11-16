@@ -81,6 +81,18 @@ class AuthService:
     def key(self, namespace, value):
         return hmac.digest(self.hmac_key, (namespace + '\0' + value).encode(), 'sha256')
 
+    def _limited_event(self, c, namespace, key, now, request_id):
+        """Record at most one transactional audit event per HMAC key per 15m."""
+        emitted = execute(c, """
+            INSERT INTO task_ayuza.auth_limit_events (key_kind, key_hash, last_event_at)
+            VALUES (:kind, :key, :now)
+            ON CONFLICT (key_kind, key_hash) DO UPDATE SET last_event_at=EXCLUDED.last_event_at
+              WHERE task_ayuza.auth_limit_events.last_event_at <= EXCLUDED.last_event_at - interval '15 minutes'
+            RETURNING key_hash
+        """, kind=namespace, key=key, now=now).first()
+        if emitted:
+            event(c, 'login_limited', request_id=request_id)
+
     def reserve(self, login, ip, request_id):
         login_key = self.key('login', login)
         ip_key = self.key('ip', str(ipaddress.ip_address(ip)))
@@ -98,7 +110,10 @@ class AuthService:
                 AND (login_key=:login OR ip_key=:ip)''',
                 login=login_key, ip=ip_key, cutoff=now-timedelta(minutes=15))
             if counts['logins'] >= 5 or counts['ips'] >= 100:
-                event(c, 'login_limited', request_id=request_id)
+                if counts['logins'] >= 5:
+                    self._limited_event(c, 'login', login_key, now, request_id)
+                if counts['ips'] >= 100:
+                    self._limited_event(c, 'ip', ip_key, now, request_id)
                 return False
             execute(c, '''INSERT INTO task_ayuza.login_attempts
                 (id,login_key,ip_key,attempted_at) VALUES (:id,:login,:ip,:now)''',
@@ -124,8 +139,61 @@ class AuthService:
             version=user['auth_version'] if user else None)
         return {'token': token, 'csrf_token': csrf, 'session_id': sid, 'kind': kind}
 
-    def prelogin(self):
-        return self.transaction(lambda c: self._session(c))
+    def prelogin(self, ip=None, token=None):
+        """Bootstrap with bounded anonymous issuance and authenticated CSRF recovery."""
+        if ip is None:
+            raise AuthError(503, 'Authentication service unavailable')
+        try:
+            ip_key = self.key('prelogin-ip', str(ipaddress.ip_address(ip)))
+        except ValueError:
+            raise AuthError(503, 'Authentication service unavailable') from None
+
+        def operation(c):
+            if token:
+                try:
+                    ref = self._lookup(c, token)
+                    if ref['user_id']:
+                        u = self._locked_user(c, ref['user_id'])
+                        s = self._locked_session(c, ref['id'])
+                        now = clock(c)
+                        if (u and u['active'] and u['auth_version'] == s['auth_version']
+                            and ((s['kind'] == 'normal' and not u['must_change_password'])
+                              or (s['kind'] == 'password' and u['must_change_password']
+                                  and u['temporary_expires_at'] > now))):
+                            return self._bootstrap_existing(c, s, token)
+                    else:
+                        s = self._locked_session(c, ref['id'])
+                        if s['kind'] == 'prelogin':
+                            return self._bootstrap_existing(c, s, token)
+                except AuthError:
+                    pass
+            lock_key = int.from_bytes(ip_key[:8], 'big', signed=True)
+            execute(c, 'SELECT pg_advisory_xact_lock(:key)', key=lock_key)
+            now = clock(c)
+            issued = execute(c, """
+                INSERT INTO task_ayuza.prelogin_limits (ip_key, window_start, issued_count, updated_at)
+                VALUES (:ip, :now, 1, :now)
+                ON CONFLICT (ip_key) DO UPDATE SET
+                  window_start = CASE WHEN task_ayuza.prelogin_limits.window_start <= :now - interval '15 minutes'
+                    THEN :now ELSE task_ayuza.prelogin_limits.window_start END,
+                  issued_count = CASE WHEN task_ayuza.prelogin_limits.window_start <= :now - interval '15 minutes'
+                    THEN 1 ELSE task_ayuza.prelogin_limits.issued_count + 1 END,
+                  updated_at = :now
+                WHERE task_ayuza.prelogin_limits.window_start <= :now - interval '15 minutes'
+                   OR task_ayuza.prelogin_limits.issued_count < 30
+                RETURNING issued_count
+            """, ip=ip_key, now=now).first()
+            if not issued:
+                raise AuthError(429, 'Too many bootstrap requests')
+            return self._session(c)
+        return self.transaction(operation)
+
+    def _bootstrap_existing(self, c, s, token):
+        # Rotate CSRF while preserving session ID, token and absolute/idle expiry.
+        csrf = secrets.token_urlsafe(32)
+        execute(c, 'UPDATE task_ayuza.sessions SET csrf_hash=:hash WHERE id=:id',
+                hash=digest(csrf), id=s['id'])
+        return {'token': token, 'csrf_token': csrf, 'session_id': s['id'], 'kind': s['kind']}
 
     def _lookup(self, c, token):
         if not token or len(token) != 43:
@@ -294,6 +362,8 @@ class AuthService:
         """Closed maintenance call: retain expired technical rows for 24h; never audit."""
         def run(c):
             execute(c,"DELETE FROM task_ayuza.login_attempts WHERE attempted_at <= clock_timestamp()-interval '24 hours 15 minutes'")
+            execute(c,"DELETE FROM task_ayuza.prelogin_limits WHERE updated_at <= clock_timestamp()-interval '24 hours 15 minutes'")
+            execute(c,"DELETE FROM task_ayuza.auth_limit_events WHERE last_event_at <= clock_timestamp()-interval '24 hours 15 minutes'")
             # Cleanup only locks sessions, never subsequently takes a user lock.
             execute(c,"DELETE FROM task_ayuza.sessions WHERE LEAST(expires_at,COALESCE(revoked_at,expires_at)) <= clock_timestamp()-interval '24 hours'")
         self.transaction(run)

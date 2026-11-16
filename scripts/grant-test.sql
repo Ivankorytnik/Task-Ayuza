@@ -14,3 +14,5 @@ GRANT SELECT, INSERT, UPDATE ON task_ayuza.users TO task_ayuza_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON task_ayuza.sessions TO task_ayuza_runtime;
 GRANT SELECT, INSERT, DELETE ON task_ayuza.login_attempts TO task_ayuza_runtime;
 GRANT SELECT ON task_ayuza.users, task_ayuza.sessions, task_ayuza.login_attempts TO task_ayuza_backup;
+GRANT SELECT, INSERT, UPDATE, DELETE ON task_ayuza.prelogin_limits, task_ayuza.auth_limit_events TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.prelogin_limits, task_ayuza.auth_limit_events TO task_ayuza_backup;
