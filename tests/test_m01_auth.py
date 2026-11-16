@@ -484,9 +484,14 @@ def test_limited_audit_bounded_and_cleanup(service):
     name='audit-'+uuid.uuid4().hex
     ip='198.51.100.221'
     for _ in range(5):service.reserve(name,ip,uuid.uuid4())
+    blocked_requests=[]
     for _ in range(50):
-        rejected(lambda:service.reserve(name,ip,uuid.uuid4()),429)
+        request_id=uuid.uuid4()
+        blocked_requests.append(request_id)
+        rejected(lambda:service.reserve(name,ip,request_id),429)
     with service.engine.connect() as c:
+        assert execute(c,"SELECT count(*) FROM task_ayuza.audit_events WHERE action='auth.login_limited' AND request_id = ANY(:ids)",
+                       ids=blocked_requests).scalar_one()==1
         assert execute(c,"SELECT count(*) FROM task_ayuza.auth_limit_events WHERE key_kind='login' AND key_hash=:key",
                        key=service.key('login',name)).scalar_one()==1
     # A second key is independently recorded.
