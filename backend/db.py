@@ -34,4 +34,3 @@ def verify_schema(engine: Engine) -> None:
         raise SchemaVersionError("PostgreSQL schema is unavailable or uninitialized") from None
     if revisions != [REQUIRED_REVISION]:
         raise SchemaVersionError("PostgreSQL schema revision is incompatible")
-

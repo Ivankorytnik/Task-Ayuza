@@ -253,4 +253,3 @@ def test_a10_static_metadata():
     assert all(table.schema == "task_ayuza" for table in Base.metadata.tables.values())
 
 
-
