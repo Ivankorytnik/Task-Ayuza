@@ -81,7 +81,7 @@ const baseFor = v => v === 'my' ? S.tasks.filter(t => t.assignee === ME || t.own
 const NAV = [['my', 'Мои задачи'], ['list', 'Все задачи'], ['kanban', 'Kanban'], ['blockers', 'Блокеры'], ['ext', 'Внешние ожидания']];
 function toast(m) { const e = document.getElementById('toast'); e.textContent = m; e.className = 'on'; clearTimeout(toast.t); toast.t = setTimeout(() => e.className = '', 2600); }
 function badges(t) {
-  let h = `<span class="badge s-${t.status}">${esc(t.status)}</span><span class="badge p-${t.prio}">${esc(t.prio)}</span>`;
+  let h = `<span class="badge s-${esc(t.status)}">${esc(t.status)}</span><span class="badge p-${esc(t.prio)}">${esc(t.prio)}</span>`;
   const ad = activeDeps(t).length, ab = activeBlockers(t).length;
   if (ad) h += `<span class="badge warn">зависимостей: ${ad}</span>`;
   if (ab) h += `<span class="badge over">блокеров: ${ab}</span>`;
@@ -112,13 +112,13 @@ function kpis(list) {
 function renderList(list) {
   if (!list.length) return '<div class="panel muted">Задач по фильтру нет.</div>';
   return `<table><thead><tr><th>Задача</th><th>Статус</th><th>Команда</th><th>Владелец</th><th>Исполнитель</th><th>Срок</th></tr></thead><tbody>` +
-    list.map(t => `<tr class="row" data-id="${t.id}"><td><b>${esc(t.title)}</b><div class="muted">${esc(t.project)}</div></td><td>${badges(t)}</td><td>${esc(t.team)}</td><td>${esc(uname(t.owner))}</td><td>${esc(uname(t.assignee))}</td><td>${esc(t.due || '')}</td></tr>`).join('') + '</tbody></table>';
+    list.map(t => `<tr class="row" data-id="${esc(t.id)}"><td><b>${esc(t.title)}</b><div class="muted">${esc(t.project)}</div></td><td>${badges(t)}</td><td>${esc(t.team)}</td><td>${esc(uname(t.owner))}</td><td>${esc(uname(t.assignee))}</td><td>${esc(t.due || '')}</td></tr>`).join('') + '</tbody></table>';
 }
 function renderKanban(list) {
   return '<div class="board">' + STATUSES.map(s => {
     const items = list.filter(t => t.status === s);
     return `<div class="col" data-s="${s}"><h3>${s}<span>${items.length}</span></h3>` + items.map(t =>
-      `<div class="card" draggable="true" data-id="${t.id}"><div class="t">${esc(t.title)}</div><div class="m">${esc(t.team)} / ${esc(uname(t.assignee))}${t.due ? ' / ' + esc(t.due) : ''}</div>${badges(t).replace(/<span class="badge s-[^"]*">[^<]*<\/span>/, '')}</div>`).join('') + '</div>';
+      `<div class="card" draggable="true" data-id="${esc(t.id)}"><div class="t">${esc(t.title)}</div><div class="m">${esc(t.team)} / ${esc(uname(t.assignee))}${t.due ? ' / ' + esc(t.due) : ''}</div>${badges(t).replace(/<span class="badge s-[^"]*">[^<]*<\/span>/, '')}</div>`).join('') + '</div>';
   }).join('') + '</div><p class="muted">Перетащите карточку в другой столбец, чтобы сменить статус вручную. Зависимости и блокеры статус сами не меняют.</p>';
 }
 function renderBlockers() {
@@ -126,7 +126,7 @@ function renderBlockers() {
     const tk = task(b.task), bt = b.blockingTask ? task(b.blockingTask) : null, late = b.status === 'Активен' && b.expected && b.expected < today();
     return `<tr><td><b>${esc(b.title)}</b><div class="muted">${esc(b.reason)}</div></td><td>${tk ? esc(tk.title) : ''}</td><td>${bt ? esc(bt.title) : ''}</td><td>${esc(b.responsible)}</td>
     <td>${esc(b.raised)}<br>${esc(b.expected || '')}${late ? ' <span class="badge over">просрочен</span>' : ''}</td><td><span class="badge ${b.status === 'Активен' ? 'over' : ''}">${esc(b.status)}</span></td>
-    <td><button data-bt="${b.id}">${b.status === 'Активен' ? 'Снять' : 'Открыть снова'}</button></td></tr>`;
+    <td><button data-bt="${esc(b.id)}">${b.status === 'Активен' ? 'Снять' : 'Открыть снова'}</button></td></tr>`;
   }).join('');
   return `<div class="row-end" style="margin:0 0 8px"><button class="primary" id="newBlocker">+ Новый блокер</button></div>` +
     (rows ? `<table><thead><tr><th>Блокер</th><th>Блокируемая задача</th><th>Блокирующая</th><th>Ответственный</th><th>Возник / срок</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="panel muted">Блокеров нет.</div>');
@@ -134,7 +134,7 @@ function renderBlockers() {
 function renderExt() {
   const mine = S.tasks.filter(t => t.assignee === ME || t.owner === ME).map(t => t.id);
   const rows = S.deps.filter(d => mine.includes(d.dependent) && !mine.includes(d.blocker) && task(d.blocker) && !CLOSED.includes(task(d.blocker).status))
-    .map(d => { const b = task(d.blocker), t = task(d.dependent); return `<tr class="row" data-id="${t.id}"><td>${esc(b.title)}<div class="muted">${esc(b.team)} / ${esc(uname(b.assignee))}</div></td><td>${esc(t.title)}</td><td>${esc(d.reason)}</td><td>${esc(b.due || '')}</td></tr>`; }).join('');
+    .map(d => { const b = task(d.blocker), t = task(d.dependent); return `<tr class="row" data-id="${esc(t.id)}"><td>${esc(b.title)}<div class="muted">${esc(b.team)} / ${esc(uname(b.assignee))}</div></td><td>${esc(t.title)}</td><td>${esc(d.reason)}</td><td>${esc(b.due || '')}</td></tr>`; }).join('');
   return `<p class="muted">Задачи других людей и команд, от которых зависят мои задачи. В «Мои задачи» они не попадают.</p>` +
     (rows ? `<table><thead><tr><th>Чего жду</th><th>Моя задача</th><th>Причина</th><th>Срок</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="panel muted">Внешних ожиданий нет.</div>');
 }
@@ -156,7 +156,7 @@ function openTask(id) {
   const members = team => USERS.filter(u => u.teams.includes(team));
   const depsHtml = id ? `<div class="full panel" style="background:#f3f5f8"><b>Зависимости (A блокирует B)</b><div id="depList"></div>
     <div class="inline" style="margin-top:6px"><select id="depKind"><option value="in">Эту задачу блокирует</option><option value="out">Эта задача блокирует</option></select>
-    <select id="depTask">${S.tasks.filter(x => x.id !== id).map(x => `<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select>
+    <select id="depTask">${S.tasks.filter(x => x.id !== id).map(x => `<option value="${esc(x.id)}">${esc(x.title)}</option>`).join('')}</select>
     <input id="depReason" placeholder="Причина"><button id="depAdd">Добавить</button></div><div class="err" id="depErr"></div></div>` : '';
   dlg.innerHTML = `<h2>${id ? 'Задача' : 'Новая задача'}</h2><form id="tf" class="grid" method="dialog" novalidate>
   <label class="full">Название *<span class="inline"><input id="f_title" value="${esc(t.title)}" maxlength="200"><button type="button" data-mic="f_title">Надиктовать</button></span></label>
@@ -177,7 +177,7 @@ function openTask(id) {
     const el = document.getElementById('depList'); if (!el) return;
     const li = S.deps.filter(d => d.dependent === id || d.blocker === id).map(d => {
       const inc = d.dependent === id, o = task(inc ? d.blocker : d.dependent);
-      return `<div class="dep"><span>${inc ? 'Блокируется:' : 'Блокирует:'} <b>${esc(o ? o.title : '?')}</b> <span class="muted">${esc(d.reason)}</span></span><button data-rm="${d.id}" class="danger">Убрать</button></div>`;
+      return `<div class="dep"><span>${inc ? 'Блокируется:' : 'Блокирует:'} <b>${esc(o ? o.title : '?')}</b> <span class="muted">${esc(d.reason)}</span></span><button data-rm="${esc(d.id)}" class="danger">Убрать</button></div>`;
     }).join('');
     el.innerHTML = li || '<div class="muted">Зависимостей нет.</div>';
   };
@@ -186,7 +186,7 @@ function openTask(id) {
   document.getElementById('tCancel').onclick = () => { stopRec(true); dlg.close(); };
   document.getElementById('tSave').onclick = () => saveTask(id);
   if (id) {
-    document.getElementById('tDel').onclick = () => { if (confirm('Удалить задачу вместе со связями?')) { S.tasks = S.tasks.filter(x => x.id !== id); S.deps = S.deps.filter(d => d.blocker !== id && d.dependent !== id); S.blockers = S.blockers.filter(b => b.task !== id && b.blockingTask !== id); save(); dlg.close(); render(); } };
+    document.getElementById('tDel').onclick = () => { if (confirm('Удалить задачу вместе со связями?')) { deleteTask(id); dlg.close(); render(); } };
     document.getElementById('depAdd').onclick = () => {
       const other = document.getElementById('depTask').value, kind = document.getElementById('depKind').value, why = document.getElementById('depReason').value;
       const err = kind === 'in' ? addDep(other, id, why) : addDep(id, other, why);
@@ -195,6 +195,15 @@ function openTask(id) {
     document.getElementById('depList').onclick = e => { const r = e.target.dataset.rm; if (r) { S.deps = S.deps.filter(d => d.id !== r); save(); refreshDeps(); render(); } };
   }
 }
+function deleteTask(id) {
+  if (!task(id)) return false;
+  S.tasks = S.tasks.filter(x => x.id !== id);
+  S.deps = S.deps.filter(d => d.blocker !== id && d.dependent !== id);
+  S.blockers = S.blockers.filter(b => b.task !== id && b.blockingTask !== id);
+  save();
+  return true;
+}
+
 function saveTask(id) {
   const g = k => document.getElementById('f_' + k).value;
   const err = document.getElementById('tErr');
@@ -242,8 +251,8 @@ function startRec(fieldId) {
 /* ---------- блокер ---------- */
 function openBlocker() {
   dlg.innerHTML = `<h2>Новый блокер</h2><div class="grid"><label class="full">Название *<input id="b_title"></label><label class="full">Причина<textarea id="b_reason" rows="2"></textarea></label>
-  <label>Блокируемая задача *<select id="b_task">${S.tasks.map(t => `<option value="${t.id}">${esc(t.title)}</option>`).join('')}</select></label>
-  <label>Блокирующая задача<select id="b_by"><option value="">нет</option>${S.tasks.map(t => `<option value="${t.id}">${esc(t.title)}</option>`).join('')}</select></label>
+  <label>Блокируемая задача *<select id="b_task">${S.tasks.map(t => `<option value="${esc(t.id)}">${esc(t.title)}</option>`).join('')}</select></label>
+  <label>Блокирующая задача<select id="b_by"><option value="">нет</option>${S.tasks.map(t => `<option value="${esc(t.id)}">${esc(t.title)}</option>`).join('')}</select></label>
   <label>Ответственная команда<select id="b_resp">${opts(TEAMS, TEAMS[0])}</select></label><label>Ожидаемый срок<input type="date" id="b_exp"></label></div><div class="err" id="bErr"></div>
   <div class="row-end"><button id="bCancel">Отмена</button><button class="primary" id="bSave">Создать</button></div>`;
   dlg.showModal();
