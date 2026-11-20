@@ -38,7 +38,7 @@ def main():
     # platform where we cannot enforce the unprivileged-user requirement.
     if os.name != 'posix' or os.geteuid() == 0:
         parser.error('Use an unprivileged POSIX user; refusing root or non-POSIX execution')
-    for executable in ('initdb', 'pg_ctl'):
+    for executable in ('initdb', 'postgres', 'pg_ctl'):
         path = args.pg_bin / executable
         if not path.is_file() or not os.access(path, os.X_OK):
             parser.error(f'Missing PostgreSQL executable: {path}')
