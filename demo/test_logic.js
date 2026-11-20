@@ -4,7 +4,7 @@ const el = () => new Proxy(function () { }, { get: (t, k) => k === 'style' ? {} 
 const store = {};
 const ctx = { console, localStorage: { getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; } }, document: { getElementById: () => el(), addEventListener() { }, createElement: el }, window: {}, navigator: {}, location: { protocol: 'file:' }, setTimeout, clearTimeout, setInterval, clearInterval, URL, Blob };
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(__dirname + '/app.js', 'utf8') + ';this.api={renderList,renderKanban,renderBlockers,renderExt,kpis,S:()=>S,addDep,activeDeps,activeBlockers,isOverdue,filtered,baseFor,task,F,seed,reset:()=>{S=seed()}}', ctx);
+vm.runInContext(fs.readFileSync(__dirname + '/app.js', 'utf8') + ';this.api={renderList,renderKanban,renderBlockers,renderExt,kpis,S:()=>S,deleteTask,addDep,activeDeps,activeBlockers,isOverdue,filtered,baseFor,task,F,seed,reset:()=>{S=seed()}}', ctx);
 const a = ctx.api;
 let n = 0; const ok = (c, m) => { assert(c, m); n++; };
 ok(a.addDep('T1', 'T1') !== '', 'самоссылка запрещена');
@@ -31,5 +31,14 @@ ok(a.renderExt().includes('характеристики зарядного'), '�
 a.reset();
 a.S().blockers[0].status = '<img src=x onerror=alert(1)>';
 ok(!a.renderBlockers().includes('<img'), 'статус блокера из localStorage экранирован');
+a.reset();
+ok(a.deleteTask('T6') === true, 'удаление существующей задачи');
+ok(a.task('T6') === undefined, 'задача удалена');
+ok(a.S().deps.every(d => d.blocker !== 'T6' && d.dependent !== 'T6'), 'зависимости удаленной задачи очищены');
+ok(a.S().blockers.every(b => b.task !== 'T6' && b.blockingTask !== 'T6'), 'обе стороны блокеров очищены');
+ok(a.deleteTask('MISSING') === false, 'несуществующую задачу удалить нельзя');
+a.reset();
+a.S().tasks[0].status = '"><img src=x onerror=alert(1)>';
+ok(!a.renderList(a.S().tasks).includes('<img'), 'класс статуса безопасен при поврежденном localStorage');
 a.reset();
 console.log('OK', n, 'проверок');
