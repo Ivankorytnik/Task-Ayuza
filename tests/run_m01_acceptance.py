@@ -34,6 +34,14 @@ def main():
     parser.add_argument('--pg-bin', type=Path, required=True)
     parser.add_argument('--port', type=int, default=55439)
     args = parser.parse_args()
+    # This acceptance runner must never launch PostgreSQL as root or on a
+    # platform where we cannot enforce the unprivileged-user requirement.
+    if os.name != 'posix' or os.geteuid() == 0:
+        parser.error('Use an unprivileged POSIX user; refusing root or non-POSIX execution')
+    for executable in ('initdb', 'pg_ctl'):
+        path = args.pg_bin / executable
+        if not path.is_file() or not os.access(path, os.X_OK):
+            parser.error(f'Missing PostgreSQL executable: {path}')
     os.chdir(Path(__file__).resolve().parents[1])
     # Ignore inherited connection/service settings. All credentials are synthetic.
     env = {k: v for k, v in os.environ.items()
