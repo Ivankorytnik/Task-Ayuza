@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task-Ayuza | Демо</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f3a5f">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="brand">Task-Ayuza <span class="tag">ДЕМО, синтетические данные</span></div>
+  <nav id="nav" aria-label="Разделы"></nav>
+  <div class="actions">
+    <button id="btnNew" class="primary">+ Новая задача</button>
+    <button id="btnExport">Экспорт JSON</button>
+    <button id="btnReset">Сбросить демо</button>
+  </div>
+</header>
+<section id="filters"></section>
+<main id="view"></main>
+<dialog id="dlg"></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>
