@@ -1,6 +1,6 @@
 # Task-Ayuza | Статус
 Срез POSTMERGE-10-SYNC от 20.11.2026 (МСК). Проверенный интегрированный `main`: `bd956cee6d1a834802114148d52c4cac06350369`.
-Это документальная синхронизация в ветке `docs/15-postmerge-10-sync` (Issue #15); до merge соответствующего Draft PR обновлённый текст не является содержимым `main`.
+Синхронизация предложена в [PR #16](https://github.com/Ivankorytnik/Task-Ayuza/pull/16) (ветка `docs/15-postmerge-10-sync`, Issue #15): на контрольном срезе PR в статусе Ready. До фактического merge эта редакция отсутствует в `main`; merge требует отдельного разрешения владельца.
 
 ## Интегрированные факты на проверенном main
 - M01.1 интегрирован (PR #1/#5): PostgreSQL/Alembic, organization, append-only аудит, роли БД, проверка схемы. Исторический отчёт: [M01-1-RESULTS.md](docs/M01-1-RESULTS.md).
@@ -23,8 +23,8 @@
 - До отдельного допуска **деплой, production, реальные данные и платные операции запрещены**. Текущий статус production: **NO-GO**.
 
 ## Единственная карточка следующей задачи
-**ID: REVIEW-DOC-POSTMERGE-10-SYNC (Issue #15, Draft PR из `docs/15-postmerge-10-sync`).** Независимая **read-only** документальная приёмка этой синхронизации.
-- Сверить фактический `main` и merge commit, PR #11/Issue #10, Draft PR #13, SHA/head/base новой docs-ветки и полный diff; убедиться, что он ограничен `PROJECT_STATUS.md` и `docs/M01-2-RESULTS.md`.
-- Проверить непротиворечивость статуса и отчёта, ссылки, отсутствие приписанного CI PASS, корректность независимой PG-приёмки и сохранение всех production-гейтов. Дать GO/NO-GO для документального Ready, **не выполняя merge**.
+**ID: OWNER-DOC16-MERGE-DECISION (Issue #15, PR #16 Ready).** Отдельное решение владельца о документальном исключении отсутствующего CI и разрешении либо запрете merge.
+- REVIEW-DOC-POSTMERGE-10-SYNC завершён: **GO**; результат READY-DOC-16 [зафиксирован в PR #16](https://github.com/Ivankorytnik/Task-Ayuza/pull/16#issuecomment-7044404577), PR переведён в Ready. Отсутствие CI (0 check runs) не означает CI PASS.
+- Перед любым решением повторно сверить актуальные SHA `main` и HEAD, Ready, `mergeable_state=clean`, diff только из двух Markdown-файлов и отсутствие пересечений с PR #13. Без отдельного явного решения владельца по CI-исключению и merge — **MERGE HOLD**.
 - Существующий [Issue #14](https://github.com/Ivankorytnik/Task-Ayuza/issues/14) — подготовительный gate M01.3, **не разрешение** реализации M01.3–M01.4. Не запускать этот этап в рамках карточки.
 - Без изменения кода, миграций, тестов, бизнес-логики, без auto-merge, деплоя, production, платных операций и реальных данных.
