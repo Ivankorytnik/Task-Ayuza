@@ -63,7 +63,7 @@ function reaches(from, to) { // есть ли путь from -> to по ребр�
   return false;
 }
 function addDep(blocker, dependent, reason) {
-  if (!blocker || !dependent) return 'Выберите задачу';
+  if (!blocker || !dependent || !task(blocker) || !task(dependent)) return 'Выберите существующие задачи';
   if (blocker === dependent) return 'Задача не может блокировать саму себя';
   if (S.deps.some(d => d.blocker === blocker && d.dependent === dependent)) return 'Такая зависимость уже есть';
   if (reaches(dependent, blocker)) return 'Зависимость создает цикл';
@@ -125,7 +125,7 @@ function renderBlockers() {
   const rows = S.blockers.map(b => {
     const tk = task(b.task), bt = b.blockingTask ? task(b.blockingTask) : null, late = b.status === 'Активен' && b.expected && b.expected < today();
     return `<tr><td><b>${esc(b.title)}</b><div class="muted">${esc(b.reason)}</div></td><td>${tk ? esc(tk.title) : ''}</td><td>${bt ? esc(bt.title) : ''}</td><td>${esc(b.responsible)}</td>
-    <td>${esc(b.raised)}<br>${esc(b.expected || '')}${late ? ' <span class="badge over">просрочен</span>' : ''}</td><td><span class="badge ${b.status === 'Активен' ? 'over' : ''}">${b.status}</span></td>
+    <td>${esc(b.raised)}<br>${esc(b.expected || '')}${late ? ' <span class="badge over">просрочен</span>' : ''}</td><td><span class="badge ${b.status === 'Активен' ? 'over' : ''}">${esc(b.status)}</span></td>
     <td><button data-bt="${b.id}">${b.status === 'Активен' ? 'Снять' : 'Открыть снова'}</button></td></tr>`;
   }).join('');
   return `<div class="row-end" style="margin:0 0 8px"><button class="primary" id="newBlocker">+ Новый блокер</button></div>` +
@@ -186,7 +186,7 @@ function openTask(id) {
   document.getElementById('tCancel').onclick = () => { stopRec(true); dlg.close(); };
   document.getElementById('tSave').onclick = () => saveTask(id);
   if (id) {
-    document.getElementById('tDel').onclick = () => { if (confirm('Удалить задачу вместе со связями?')) { S.tasks = S.tasks.filter(x => x.id !== id); S.deps = S.deps.filter(d => d.blocker !== id && d.dependent !== id); S.blockers = S.blockers.filter(b => b.task !== id); save(); dlg.close(); render(); } };
+    document.getElementById('tDel').onclick = () => { if (confirm('Удалить задачу вместе со связями?')) { S.tasks = S.tasks.filter(x => x.id !== id); S.deps = S.deps.filter(d => d.blocker !== id && d.dependent !== id); S.blockers = S.blockers.filter(b => b.task !== id && b.blockingTask !== id); save(); dlg.close(); render(); } };
     document.getElementById('depAdd').onclick = () => {
       const other = document.getElementById('depTask').value, kind = document.getElementById('depKind').value, why = document.getElementById('depReason').value;
       const err = kind === 'in' ? addDep(other, id, why) : addDep(id, other, why);
