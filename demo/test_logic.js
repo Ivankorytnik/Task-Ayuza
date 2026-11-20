@@ -8,6 +8,8 @@ vm.runInContext(fs.readFileSync(__dirname + '/app.js', 'utf8') + ';this.api={ren
 const a = ctx.api;
 let n = 0; const ok = (c, m) => { assert(c, m); n++; };
 ok(a.addDep('T1', 'T1') !== '', 'самоссылка запрещена');
+ok(a.addDep('T1', 'MISSING') !== '', 'несуществующая зависимая задача запрещена');
+ok(a.addDep('MISSING', 'T1') !== '', 'несуществующая блокирующая задача запрещена');
 ok(a.addDep('T2', 'T3') !== '', 'дубль запрещен');
 ok(a.addDep('T8', 'T6') !== '', 'цикл T6->T4->T8->T6 запрещен');
 ok(a.addDep('T3', 'T2') !== '', 'обратное ребро цикл');
@@ -26,4 +28,8 @@ a.F.status = 'Блокирована'; ok(a.filtered(a.S().tasks).length === 1, 
 a.F.q = 'дашборд'; ok(a.filtered(a.S().tasks).length === 1, 'поиск'); a.F.q = '';
 for (const v of ['my','list','kanban','blockers','ext']) { const l = a.filtered(a.baseFor(v)); const h = a.kpis(l) + (v==='kanban'?a.renderKanban(l):v==='blockers'?a.renderBlockers():v==='ext'?a.renderExt():a.renderList(l)); ok(h.length > 50, 'отрисовка ' + v); }
 ok(a.renderExt().includes('характеристики зарядного'), 'внешние ожидания содержат причину');
+a.reset();
+a.S().blockers[0].status = '<img src=x onerror=alert(1)>';
+ok(!a.renderBlockers().includes('<img'), 'статус блокера из localStorage экранирован');
+a.reset();
 console.log('OK', n, 'проверок');
