@@ -522,3 +522,85 @@ def test_database_auth_constraints_and_runtime_limiter_permissions(service):
             execute(c,"UPDATE task_ayuza.users SET login='MixedCase',login_normalized='MixedCase' WHERE id=:id",id=uid)
         assert e.value.orig.sqlstate=='23514'
         c.rollback()
+def test_parallel_double_login_ip_limits_audit_once_each(service):
+    """When both limits are reached, only two events total are committed."""
+    name = 'double_' + uuid.uuid4().hex
+    ip = '198.51.100.222'
+    for _ in range(5):
+        service.reserve(name, ip, uuid.uuid4())
+    for i in range(95):
+        service.reserve('ipseed_' + uuid.uuid4().hex, ip, uuid.uuid4())
+    requests = [uuid.uuid4() for _ in range(12)]
+    barrier = Barrier(len(requests))
+
+    def denied(request_id):
+        barrier.wait(timeout=15)
+        try:
+            service.reserve(name, ip, request_id)
+        except AuthError as error:
+            return error.status
+        return 200
+
+    with ThreadPoolExecutor(max_workers=len(requests)) as pool:
+        statuses = list(pool.map(denied, requests))
+    assert statuses == [429] * len(requests)
+
+    with service.engine.connect() as c:
+        assert execute(c, "SELECT count(*) FROM task_ayuza.login_attempts WHERE login_key=:login AND ip_key=:ip",
+                       login=service.key('login', name), ip=service.key('ip', ip)).scalar_one() == 5
+        assert execute(c, "SELECT count(*) FROM task_ayuza.auth_limit_events WHERE key_kind='login' AND key_hash=:key",
+                       key=service.key('login', name)).scalar_one() == 1
+        assert execute(c, "SELECT count(*) FROM task_ayuza.auth_limit_events WHERE key_kind='ip' AND key_hash=:key",
+                       key=service.key('ip', ip)).scalar_one() == 1
+        events = execute(c, "SELECT request_id FROM task_ayuza.audit_events WHERE action='auth.login_limited' AND request_id = ANY(:ids)",
+                         ids=requests).scalars().all()
+        assert len(events) == 2 and len(set(events)) == 1
+
+
+def test_limited_event_marker_atomic_on_database_failure(service):
+    """An audit failure must roll back the marker, not only the audit row."""
+    name = 'atomic_' + uuid.uuid4().hex
+    ip = '198.51.100.223'
+    for _ in range(5):
+        service.reserve(name, ip, uuid.uuid4())
+    request_id = uuid.uuid4()
+    original = auth_module.event
+
+    def failing_audit(c, action, **kwargs):
+        original(c, action, **kwargs)
+        if action == 'login_limited':
+            execute(c, '''INSERT INTO task_ayuza.audit_events
+                (id, actor_kind, entity_kind, entity_id, action, request_id, "new")
+                VALUES (:id, 'system', 'session', :entity, 'auth.login_limited', :request,
+                        '{"forbidden":"secret"}'::jsonb)''',
+                id=uuid.uuid4(), entity=uuid.uuid4(), request=uuid.uuid4())
+
+    with patch('backend.auth.event', side_effect=failing_audit):
+        rejected(lambda: service.reserve(name, ip, request_id), 503)
+    with service.engine.connect() as c:
+        assert execute(c, "SELECT count(*) FROM task_ayuza.audit_events WHERE request_id=:id",
+                       id=request_id).scalar_one() == 0
+        assert execute(c, "SELECT count(*) FROM task_ayuza.auth_limit_events WHERE key_kind='login' AND key_hash=:key",
+                       key=service.key('login', name)).scalar_one() == 0
+        assert execute(c, "SELECT count(*) FROM task_ayuza.login_attempts WHERE login_key=:key",
+                       key=service.key('login', name)).scalar_one() == 5
+    retry_id = uuid.uuid4()
+    rejected(lambda: service.reserve(name, ip, retry_id), 429)
+    with service.engine.connect() as c:
+        assert execute(c, "SELECT count(*) FROM task_ayuza.audit_events WHERE action='auth.login_limited' AND request_id=:id",
+                       id=retry_id).scalar_one() == 1
+        assert execute(c, "SELECT count(*) FROM task_ayuza.auth_limit_events WHERE key_kind='login' AND key_hash=:key",
+                       key=service.key('login', name)).scalar_one() == 1
+
+
+def test_sequential_bootstrap_multiple_tabs_latest_csrf_wins(service):
+    """Recovery does not resurrect an older tab's CSRF token."""
+    uid, name, session = normal(service)
+    original_csrf = session['csrf_token']
+    tab_b = service.prelogin(ip='192.0.2.151', token=session['token'])
+    tab_c = service.prelogin(ip='192.0.2.151', token=session['token'])
+    assert tab_b['session_id'] == tab_c['session_id'] == session['session_id']
+    assert len({original_csrf, tab_b['csrf_token'], tab_c['csrf_token']}) == 3
+    rejected(lambda: service.renew(session['token'], original_csrf), 403)
+    rejected(lambda: service.renew(session['token'], tab_b['csrf_token']), 403)
+    service.renew(session['token'], tab_c['csrf_token'])
