@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -170,6 +170,26 @@ await test('dependency payload direction and link requests', async () => {
   assert.deepEqual(f.calls.map((c) => c.init.method + ' ' + c.path), ['POST /api/v1/blockers/b1/resolved', 'POST /api/v1/dependencies/e1/remove',
     'GET /api/v1/risks/r1/links', 'PUT /api/v1/risks/r1/tasks/t1']);
   assert.deepEqual(JSON.parse(f.calls[0].init.body), { expected_version: 3, resolved: true });
+});
+
+await test('gantt rows and undated tasks', () => {
+  const g = ganttRows([{ id: 1, start_date: '2026-12-01', due_date: '2026-12-10' }, { id: 2, start_date: null, due_date: '2026-12-05' },
+    { id: 3, start_date: null, due_date: null }, { id: 4, start_date: '2026-12-20', due_date: '2026-12-20' }]);
+  assert.equal(g.span, 20); assert.equal(g.rows.length, 3); assert.deepEqual(g.undated.map((t) => t.id), [3]);
+  assert.equal(g.rows[0].left, 0); assert.equal(g.rows[0].width, 50);
+  assert.equal(g.rows[1].width, 5); assert.equal(g.rows[1].left, 20);
+  assert.deepEqual(ganttRows([]), { rows: [], undated: [], span: 0, min: 0 });
+});
+
+await test('calendar month grid is Monday based and holds due tasks', () => {
+  const cells = monthGrid(2026, 10, [{ id: 1, due_date: '2026-11-21' }, { id: 2, due_date: '2026-12-01' }]);
+  assert.equal(cells.length % 7, 0);
+  assert.equal(cells.filter((c) => c.day).length, 30);
+  assert.equal(cells.findIndex((c) => c.day === 1), 6);               // 1 Nov 2026 is a Sunday
+  assert.deepEqual(cells.find((c) => c.day === 21).tasks.map((t) => t.id), [1]);
+  assert.equal(cells.reduce((n, c) => n + c.tasks.length, 0), 1);
+  assert.deepEqual(shiftMonth(2026, 11, 1), { year: 2027, month: 0 });
+  assert.deepEqual(shiftMonth(2026, 0, -1), { year: 2025, month: 11 });
 });
 
 console.log(`${passed} passed`);

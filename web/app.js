@@ -1,18 +1,19 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { MONTHS, ganttRows, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const state = { user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null, risks: [], release: '', riskLinks: {} };
+  blockers: [], deps: null, risks: [], release: '', riskLinks: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() };
 const api = new Api((...args) => fetch(...args), () => { state.user = null; state.phase = 'login'; render(); });
 let pendingKey = null;                                  // one client_key per creation attempt, kept until it succeeds
 
 function h(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [name, value] of Object.entries(attrs)) {
-    if (name === 'on') for (const [evt, fn] of Object.entries(value)) node.addEventListener(evt, fn);
+    if (name === 'css') for (const [prop, v] of Object.entries(value)) node.style.setProperty(prop, v);   // CSSOM is allowed by CSP, a style attribute is not
+    else if (name === 'on') for (const [evt, fn] of Object.entries(value)) node.addEventListener(evt, fn);
     else if (value !== false && value != null) node.setAttribute(name, value === true ? '' : String(value));
   }
   for (const child of children.flat(Infinity)) node.append(child instanceof Node ? child : document.createTextNode(String(child)));
@@ -242,6 +243,28 @@ function risksView() {
     state.risks.length ? '' : h('p', { class: 'muted' }, 'Рисков нет.'), state.risks.map(riskCard), form);
 }
 
+function ganttView() {
+  const g = ganttRows(state.tasks);
+  return h('div', { class: 'gantt' },
+    g.rows.length ? '' : h('p', { class: 'muted' }, 'Нет задач со сроками.'),
+    g.rows.map((r) => h('div', { class: 'grow' },
+      h('div', { class: 'glabel', on: { click: () => openTask(r.task.id) } }, r.task.title),
+      h('div', { class: 'gtrack' }, h('div', { class: `gbar ${r.task.status}`, css: { left: `${r.left}%`, width: `${Math.max(r.width, 1)}%` },
+        title: `${r.task.start_date || ''} ${r.task.due_date || ''}` })))),
+    g.undated.length ? h('p', { class: 'muted' }, `Без сроков: ${g.undated.length}`) : '');
+}
+
+function calendarView() {
+  const cells = monthGrid(state.cal.year, state.cal.month, state.tasks);
+  const go = (d) => { state.cal = shiftMonth(state.cal.year, state.cal.month, d); render(); };
+  return h('div', {},
+    h('div', { class: 'bar' }, h('button', { on: { click: () => go(-1) } }, 'Назад'),
+      h('strong', {}, `${MONTHS[state.cal.month]} ${state.cal.year}`), h('button', { on: { click: () => go(1) } }, 'Вперёд')),
+    h('div', { class: 'cal' }, ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((d) => h('div', { class: 'chead' }, d)),
+      cells.map((c) => h('div', { class: 'cell' }, c.day ? [h('div', { class: 'muted' }, String(c.day)),
+        c.tasks.map((t) => h('div', { class: 'ctask', on: { click: () => openTask(t.id) } }, t.title))] : ''))));
+}
+
 function notesView() {
   return h('div', {}, h('div', { class: 'bar' }, h('button', { on: { click: loadNotes } }, 'Обновить')),
     state.notes.length ? '' : h('p', { class: 'muted' }, 'Уведомлений нет.'),
@@ -302,7 +325,7 @@ function mainView() {
       state.workspaces.map((w) => h('option', { value: w.id, selected: w.id === state.ws }, w.name))),
     h('label', { for: 'st' }, 'Статус'),
     h('select', { id: 'st', on: { change: async (e) => { state.status = e.target.value; await loadTasks(true); } } }, options(STATUSES, state.status, 'Все')));
-  const tabs = h('div', { class: 'bar' }, [['list', 'Список'], ['board', 'Kanban'], ['risks', 'Риски'], ['notes', `Уведомления${state.unread ? ` (${state.unread})` : ''}`]]
+  const tabs = h('div', { class: 'bar' }, [['list', 'Список'], ['board', 'Kanban'], ['gantt', 'Гант'], ['calendar', 'Календарь'], ['risks', 'Риски'], ['notes', `Уведомления${state.unread ? ` (${state.unread})` : ''}`]]
     .map(([key, text]) => h('button', { class: state.view === key ? 'primary' : '', on: { click: async () => {
       state.view = key; state.error = ''; state.message = '';
       if (key === 'notes') await loadNotes(); else if (key === 'risks') await loadRisks(); else await loadTasks(true);
@@ -314,7 +337,7 @@ function mainView() {
   if (state.view === 'risks') return [tabs, messages, risksView(), h('p', { class: 'muted' }, state.release)];
   return [bar, tabs, messages, state.dir ? createView() : '', h('div', { class: 'bar' }, h('button', { on: { click: () => exportTasks('csv') } }, 'Выгрузить CSV'),
       h('button', { on: { click: () => exportTasks('json') } }, 'Выгрузить JSON')),
-    state.view === 'board' ? boardView() : table,
+    state.view === 'board' ? boardView() : state.view === 'gantt' ? ganttView() : state.view === 'calendar' ? calendarView() : table,
     state.more ? h('button', { on: { click: async () => { await loadTasks(false); } } }, 'Показать ещё') : '',
     state.selected ? [detailView(), blockersView()] : ''];
 }
