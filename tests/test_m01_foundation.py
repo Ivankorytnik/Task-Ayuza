@@ -249,7 +249,8 @@ def test_a09_backup_read_only(runtime_engine):
 def test_a10_static_metadata():
     assert sorted(table.name for table in Base.metadata.tables.values()) == [
         "audit_events", "auth_limit_events", "login_attempts", "organization",
-        "prelogin_limits", "sessions", "users"
+        "prelogin_limits", "sessions", "system_role_assignments", "team_members", "teams", "users",
+        "workspace_members", "workspace_team_access", "workspace_teams", "workspaces"
     ]
     assert all(table.schema == "task_ayuza" for table in Base.metadata.tables.values())
 

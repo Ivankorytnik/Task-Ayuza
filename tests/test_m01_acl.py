@@ -4,6 +4,7 @@ Run by tests/run_m01_acceptance.py after the foundation and auth suites. Project
 not exist yet, so project/task ACL checks (D02 matrix rows for objects) are deferred to M02 and
 are not counted as passed here.
 """
+import secrets
 import threading
 import time
 import uuid
@@ -17,7 +18,7 @@ from sqlalchemy.exc import DBAPIError
 import backend.acl as acl_module
 from backend.acl import AclError, AclService
 from backend.auth import AuthError, execute
-from test_m01_auth import normal, service  # noqa: F401  (module-scoped runtime AuthService fixture)
+from test_m01_auth import PASSWORD, service, user  # noqa: F401  (service: module-scoped runtime AuthService fixture)
 from test_m01_foundation import _test_url
 
 
@@ -47,9 +48,23 @@ def acl(service):
     return AclService(service)
 
 
+def _ip():
+    """Distinct synthetic client address per call: the M01.2 limiter caps attempts per address."""
+    return f'10.{secrets.randbelow(256)}.{secrets.randbelow(256)}.{secrets.randbelow(254) + 1}'
+
+
 def person(auth_service):
-    uid, _name, session = normal(auth_service)
-    return Who(uid, session)
+    """Synthetic user with a normal session (temporary password changed), no ACL rights."""
+    uid, name, temporary = user(auth_service)
+
+    def sign_in(password):
+        ip = _ip()
+        pre = auth_service.prelogin(ip=ip)
+        return auth_service.login(name, password, _ip(), pre['token'], pre['csrf_token'])
+
+    first = sign_in(temporary)
+    auth_service.change_password(first['token'], first['csrf_token'], PASSWORD)
+    return Who(uid, sign_in(PASSWORD))
 
 
 def admin_sql(migrator, statement, **params):
@@ -142,14 +157,14 @@ def test_runtime_privileges_and_constraints(service, acl, migrator):
     violates(runtime, member_insert, '23514', w=w.ws, u=w.outsider.id, role='root')
     violates(runtime, member_insert, '23505', w=w.ws, u=w.member.id, role='participant')
     workspace_insert = '''INSERT INTO task_ayuza.workspaces (id, organization_id, name, timezone, version)
-        SELECT gen_random_uuid(), organization_id, :name, :tz, :version FROM task_ayuza.organization'''
+        SELECT gen_random_uuid(), id, :name, :tz, :version FROM task_ayuza.organization'''
     violates(runtime, workspace_insert, '23514', name='V0', tz='UTC', version=0)
     violates(runtime, workspace_insert, '23514', name='   ', tz='UTC', version=1)
     violates(runtime, workspace_insert, '23514', name='Bad zone', tz='Mars/Base', version=1)
     violates(runtime, "UPDATE task_ayuza.workspaces SET timezone='Mars/Base' WHERE id=:id", '23514', id=w.ws)
     violates(runtime, "UPDATE task_ayuza.workspaces SET version=0 WHERE id=:id", '23514', id=w.ws)
     violates(runtime, '''INSERT INTO task_ayuza.teams (id, organization_id, name)
-        SELECT gen_random_uuid(), organization_id, '   ' FROM task_ayuza.organization''', '23514')
+        SELECT gen_random_uuid(), id, '   ' FROM task_ayuza.organization''', '23514')
     access_insert = '''INSERT INTO task_ayuza.workspace_team_access
         (id, workspace_id, team_id, user_id, capability, granted_by, reason)
         VALUES (gen_random_uuid(), :w, :t, :u, :cap, :by, 'synthetic')'''
