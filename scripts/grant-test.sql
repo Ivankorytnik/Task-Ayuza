@@ -67,3 +67,8 @@ GRANT SELECT ON task_ayuza.outbox_events, task_ayuza.notifications TO task_ayuza
 GRANT SELECT, INSERT, UPDATE ON task_ayuza.risk_register, task_ayuza.risk_task_links, task_ayuza.risk_blocker_links TO task_ayuza_runtime;
 GRANT SELECT, INSERT ON task_ayuza.risk_checks TO task_ayuza_runtime;
 GRANT SELECT ON task_ayuza.risk_register, task_ayuza.risk_checks, task_ayuza.risk_task_links, task_ayuza.risk_blocker_links TO task_ayuza_backup;
+
+-- M04.3. releases is written only by the authorized release procedure (migrator), never by runtime.
+GRANT SELECT ON task_ayuza.releases TO task_ayuza_runtime;
+GRANT SELECT, INSERT ON task_ayuza.export_events TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.releases, task_ayuza.export_events TO task_ayuza_backup;
