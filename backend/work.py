@@ -15,6 +15,8 @@ comments, task_events history, task_access_grants, dependencies and blockers.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from datetime import date
 
@@ -113,6 +115,30 @@ def _check_people(c, workspace_id, owner, team, assignee):
             raise AclError(422, 'Assignee is not in the executor team')
 
 
+def _event(c, u, task_id, event_type, from_status=None, to_status=None):
+    """Append a task_events row with the attribution at this moment (D04/D06); same transaction."""
+    row = one(c, 'SELECT * FROM task_ayuza.tasks WHERE id=:id', id=task_id)
+    project_owner = None
+    if row['project_id'] is not None:
+        project_owner = execute(c, 'SELECT owner_user_id FROM task_ayuza.projects WHERE id=:p',
+                                p=row['project_id']).scalar_one()
+    execute(c, '''INSERT INTO task_ayuza.task_events
+        (id, workspace_id, task_id, actor_user_id, event_type, from_status, to_status, resulting_version,
+         project_id_snapshot, team_id_snapshot, owner_id_snapshot, assignee_id_snapshot,
+         project_owner_id_snapshot, due_date_snapshot, priority_snapshot, stage_id_snapshot)
+        VALUES (:id, :w, :t, :a, :type, :f, :to, :v, :p, :team, :o, :asg, :po, :due, :pr, :st)''',
+            id=uuid.uuid4(), w=row['workspace_id'], t=task_id, a=u['id'], type=event_type, f=from_status,
+            to=to_status, v=row['version'], p=row['project_id'], team=row['executor_team_id'],
+            o=row['result_owner_user_id'], asg=row['assignee_user_id'], po=project_owner, due=row['due_date'],
+            pr=row['priority'], st=row['stage_id'])
+
+
+def _status_event_type(old: str, new: str) -> str:
+    if old in TERMINAL and new not in TERMINAL:
+        return 'reopened'
+    return {'done': 'completed', 'cancelled': 'cancelled'}.get(new, 'status_changed')
+
+
 class WorkService:
     def __init__(self, auth: AuthService):
         self.auth = auth
@@ -138,7 +164,7 @@ class WorkService:
         raise _forbidden() if role is not None else _not_found()
 
     def _task_access(self, c, u, s, task, op):
-        """op: read | comment | edit | assign | archive. Returns (project, member_role, project_role)."""
+        """op: read | comment | edit | assign | archive | access. Returns (project, member_role, project_role)."""
         wid, uid = task['workspace_id'], u['id']
         project = None
         if task['project_id'] is not None:
@@ -147,19 +173,25 @@ class WorkService:
         member = membership(c, uid, wid)
         prole = _project_role(c, uid, project) if (member and project) else None
         personal = uid in (task['created_by_user_id'], task['result_owner_user_id'], task['assignee_user_id'])
-        readable = member is not None and (personal or prole is not None or _in_team(c, uid, task['executor_team_id']))
+        grants = set()
+        if member is not None:  # explicit task-level extension (D02); needs active workspace membership
+            grants = set(execute(c, '''SELECT capability FROM task_ayuza.task_access_grants
+                WHERE task_id=:t AND user_id=:u AND revoked_at IS NULL ORDER BY id FOR SHARE''',
+                                 t=task['id'], u=uid).scalars().all())
+        basis = member is not None and (personal or prole is not None or _in_team(c, uid, task['executor_team_id']))
+        readable = basis or (member is not None and bool(grants))
         ok = False
         if op == 'read':
             ok = readable
         elif member is not None and member['role'] != 'observer' and prole != 'observer':
             if op == 'comment':
-                ok = readable
+                ok = basis or bool(grants & {'comment', 'content_edit'})
             elif op == 'edit':
-                ok = personal or prole in ('participant', 'project_manager')
-            else:
+                ok = personal or prole in ('participant', 'project_manager') or 'content_edit' in grants
+            else:  # assign | archive | access
                 ok = uid == task['result_owner_user_id'] or prole == 'project_manager'
         cap = {'read': 'read', 'comment': 'comment', 'edit': 'content_edit', 'assign': 'assign',
-               'archive': 'archive_restore'}[op]
+               'archive': 'archive_restore', 'access': 'manage_access'}[op]
         if not ok and _grant_ok(c, s, uid, wid, cap):
             ok = True
         if ok:
@@ -332,7 +364,7 @@ class WorkService:
 
     def create_task(self, token, csrf, workspace_id, title, result_owner_user_id, executor_team_id,
                     project_id=None, description='', priority='normal', assignee_user_id=None,
-                    start_date=None, due_date=None, parent_task_id=None, request_id=None):
+                    start_date=None, due_date=None, parent_task_id=None, client_key=None, request_id=None):
         wid, owner, team = as_uuid(workspace_id), as_uuid(result_owner_user_id), as_uuid(executor_team_id)
         pid = as_uuid(project_id) if project_id is not None else None
         assignee = as_uuid(assignee_user_id) if assignee_user_id is not None else None
@@ -343,12 +375,21 @@ class WorkService:
         start, due = _date(start_date), _date(due_date)
         _check_dates(start, due)
         request_id = as_uuid(request_id) if request_id else uuid.uuid4()
+        if client_key is not None and (not isinstance(client_key, str) or not 8 <= len(client_key) <= 64):
+            raise AclError(422, 'Invalid idempotency key')
+        digest = hashlib.sha256(json.dumps(
+            [str(wid), title, description, priority, str(owner), str(team), str(pid), str(assignee),
+             str(start), str(due), str(parent_id)], ensure_ascii=False).encode()).digest()
 
         def run(c, u, s):
             uid = u['id']
             member = membership(c, uid, wid)
             if member is None:
                 raise _not_found()  # the author must be an active workspace member; a grant alone cannot author
+            if client_key is not None:
+                replay = self._idempotent_replay(c, u, s, 'task.create', client_key, digest)
+                if replay is not None:
+                    return replay
             project, prole = None, None
             if pid is not None:
                 project = one(c, 'SELECT * FROM task_ayuza.projects WHERE id=:p AND workspace_id=:w FOR SHARE', p=pid, w=wid)
@@ -384,6 +425,15 @@ class WorkService:
                 VALUES (:id, :w, :p, :t, :d, :pr, :a, :o, :team, :asg, :s, :due, :parent)''',
                     id=tid, w=wid, p=pid, t=title, d=description, pr=priority, a=author, o=owner, team=team,
                     asg=assignee, s=start, due=due, parent=parent_id)
+            _event(c, u, tid, 'created')
+            if client_key is not None:
+                execute(c, '''INSERT INTO task_ayuza.idempotency_requests
+                    (id, actor_user_id, operation, client_key, request_hash, resource_id, expires_at)
+                    VALUES (:id, :a, 'task.create', :k, :h, :r, clock_timestamp() + interval '24 hours')
+                    ON CONFLICT (actor_user_id, operation, client_key) DO UPDATE
+                    SET request_hash = EXCLUDED.request_hash, resource_id = EXCLUDED.resource_id,
+                        created_at = clock_timestamp(), expires_at = EXCLUDED.expires_at''',
+                        id=uuid.uuid4(), a=uid, k=client_key, h=digest, r=tid)
             audit(c, u, s, request_id=request_id, entity_kind='task', entity_id=tid, action='task.created',
                   workspace_id=wid, old=None,
                   new={'status': 'new', 'priority': priority, 'project_id': str(pid) if pid else None,
@@ -392,6 +442,23 @@ class WorkService:
                        'parent_task_id': str(parent_id) if parent_id else None})
             return {'id': tid, 'version': 1}
         return self.auth.protected(token, run, csrf=csrf, mutation=True)
+
+    def _idempotent_replay(self, c, u, s, operation, client_key, digest):
+        """Same actor, operation and key: same content returns the same resource after a fresh access check."""
+        lock = int.from_bytes(hashlib.sha256(f'{u["id"]}:{operation}:{client_key}'.encode()).digest()[:8], 'big', signed=True)
+        execute(c, 'SELECT pg_advisory_xact_lock(:k)', k=lock)
+        row = one(c, '''SELECT request_hash, resource_id FROM task_ayuza.idempotency_requests
+            WHERE actor_user_id=:a AND operation=:o AND client_key=:k AND expires_at > clock_timestamp()''',
+                  a=u['id'], o=operation, k=client_key)
+        if row is None:
+            return None
+        if bytes(row['request_hash']) != digest:
+            raise AclError(409, 'Idempotency key was used with different content')
+        task = one(c, 'SELECT * FROM task_ayuza.tasks WHERE id=:id', id=row['resource_id'])
+        if task is None:
+            raise _not_found()
+        self._task_access(c, u, s, task, 'read')
+        return {'id': task['id'], 'version': task['version'], 'replayed': True}
 
     def _locked_task(self, c, task_id):
         task = one(c, 'SELECT * FROM task_ayuza.tasks WHERE id=:id FOR UPDATE', id=task_id)
@@ -443,8 +510,13 @@ class WorkService:
             if row is None:
                 raise AclError(409, 'Version conflict')
             if new_status != task['status']:
+                _event(c, u, tid, _status_event_type(task['status'], new_status), task['status'], new_status)
                 audit(c, u, s, request_id=request_id, entity_kind='task', entity_id=tid, action='task.status_changed',
                       workspace_id=task['workspace_id'], old={'status': task['status']}, new={'status': new_status})
+            if 'due_date' in values and values['due_date'] != task['due_date']:
+                _event(c, u, tid, 'due_changed')
+            if 'priority' in values and values['priority'] != task['priority']:
+                _event(c, u, tid, 'priority_changed')
             others = sorted(k for k in values if k != 'status' and task[k] != values[k])
             if others:
                 audit(c, u, s, request_id=request_id, entity_kind='task', entity_id=tid, action='task.updated',
@@ -481,6 +553,8 @@ class WorkService:
                       o=new_owner, t=new_team, a=new_assignee, id=tid, v=expected)
             if row is None:
                 raise AclError(409, 'Version conflict')
+            _event(c, u, tid, 'assigned')
+
             def snap(o, t, a):
                 return {'result_owner_user_id': str(o), 'executor_team_id': str(t),
                         'assignee_user_id': str(a) if a else None}
@@ -509,6 +583,7 @@ class WorkService:
                       a=archived, id=tid, v=expected)
             if row is None:
                 raise AclError(409, 'Version conflict')
+            _event(c, u, tid, 'archived' if archived else 'restored')
             audit(c, u, s, request_id=request_id, entity_kind='task', entity_id=tid,
                   action='task.archived' if archived else 'task.restored', workspace_id=task['workspace_id'],
                   old={'archived': not archived}, new={'archived': archived})
@@ -544,6 +619,8 @@ class WorkService:
                   AND (CAST(:after AS uuid) IS NULL OR t.id > CAST(:after AS uuid))
                   AND (CAST(:everything AS boolean) OR (CAST(:member AS boolean) AND (
                        CAST(:u AS uuid) IN (t.created_by_user_id, t.result_owner_user_id, t.assignee_user_id)
+                       OR EXISTS (SELECT 1 FROM task_ayuza.task_access_grants g
+                                  WHERE g.task_id=t.id AND g.user_id=:u AND g.revoked_at IS NULL)
                        OR EXISTS (SELECT 1 FROM task_ayuza.team_members tm JOIN task_ayuza.teams tt ON tt.id = tm.team_id
                                   WHERE tm.user_id=:u AND tm.team_id=t.executor_team_id AND tm.active AND tt.active)
                        OR (t.project_id IS NOT NULL AND (
@@ -554,4 +631,94 @@ class WorkService:
                 ORDER BY t.id LIMIT :n''', w=wid, u=u['id'], status=status, after=after, n=limit,
                            everything=everything, member=member is not None).mappings().all()
             return [dict(r) for r in rows]
+        return self.auth.protected(token, run)
+
+    # ------------------------------------------------------------------ explicit task access (D02)
+
+    TASK_GRANT_CAPABILITIES = ('read', 'comment', 'content_edit', 'link')
+
+    def set_task_access(self, token, csrf, task_id, user_id, capability, active, reason, expected_version=None,
+                        request_id=None):
+        """Result owner, project manager or a manage_access grant extends or withdraws access to one task."""
+        tid, target, expected = as_uuid(task_id), as_uuid(user_id), check_version(expected_version)
+        if capability not in self.TASK_GRANT_CAPABILITIES or not isinstance(active, bool):
+            raise AclError(422, 'Invalid value')
+        reason = clean_text(reason, 500)
+        request_id = as_uuid(request_id) if request_id else uuid.uuid4()
+
+        def run(c, u, s):
+            task = self._locked_task(c, tid)
+            self._task_access(c, u, s, task, 'access')
+            if target == u['id']:
+                raise _forbidden()  # no self-escalation
+            _active_member(c, task['workspace_id'], target)
+            row = one(c, '''SELECT * FROM task_ayuza.task_access_grants
+                WHERE task_id=:t AND user_id=:u AND capability=:cap FOR UPDATE''', t=tid, u=target, cap=capability)
+            snap = {'capability': capability, 'user_id': str(target)}
+            if row is None:
+                if not active:
+                    return {'changed': False}
+                gid = uuid.uuid4()
+                execute(c, '''INSERT INTO task_ayuza.task_access_grants
+                    (id, workspace_id, task_id, user_id, capability, granted_by, reason)
+                    VALUES (:id, :w, :t, :u, :cap, :by, :reason)''', id=gid, w=task['workspace_id'], t=tid, u=target,
+                        cap=capability, by=u['id'], reason=reason)
+                audit(c, u, s, request_id=request_id, entity_kind='task', entity_id=tid, action='task.access_granted',
+                      workspace_id=task['workspace_id'], old=None, new=snap)
+                return {'id': gid, 'version': 1, 'changed': True}
+            if (row['revoked_at'] is None) == active:
+                return {'id': row['id'], 'version': row['version'], 'changed': False}
+            if expected is None or expected != row['version']:
+                raise AclError(409, 'Version conflict')
+            upd = one(c, '''UPDATE task_ayuza.task_access_grants SET
+                revoked_at = CASE WHEN :a THEN NULL ELSE clock_timestamp() END,
+                granted_by = CASE WHEN :a THEN CAST(:by AS uuid) ELSE granted_by END,
+                reason = CASE WHEN :a THEN :reason ELSE reason END,
+                granted_at = CASE WHEN :a THEN clock_timestamp() ELSE granted_at END,
+                version = version + 1 WHERE id=:id AND version=:v RETURNING version''',
+                      a=active, by=u['id'], reason=reason, id=row['id'], v=expected)
+            if upd is None:
+                raise AclError(409, 'Version conflict')
+            audit(c, u, s, request_id=request_id, entity_kind='task', entity_id=tid,
+                  action='task.access_granted' if active else 'task.access_revoked',
+                  workspace_id=task['workspace_id'], old=None, new=snap)
+            return {'id': row['id'], 'version': upd['version'], 'changed': True}
+        return self.auth.protected(token, run, csrf=csrf, mutation=True)
+
+    def list_task_access(self, token, task_id):
+        tid = as_uuid(task_id)
+
+        def run(c, u, s):
+            task = one(c, 'SELECT * FROM task_ayuza.tasks WHERE id=:id', id=tid)
+            if task is None:
+                raise _not_found()
+            self._task_access(c, u, s, task, 'access')
+            return [dict(r) for r in execute(c, '''SELECT id, user_id, capability, granted_by, granted_at, version
+                FROM task_ayuza.task_access_grants WHERE task_id=:t AND revoked_at IS NULL
+                ORDER BY user_id, capability''', t=tid).mappings().all()]
+        return self.auth.protected(token, run)
+
+    # ------------------------------------------------------------------ history (D04/D06)
+
+    def list_task_events(self, token, task_id):
+        """History with attribution at event time. Project fields are shown only if the caller can read the project."""
+        tid = as_uuid(task_id)
+
+        def run(c, u, s):
+            task = one(c, 'SELECT * FROM task_ayuza.tasks WHERE id=:id', id=tid)
+            if task is None:
+                raise _not_found()
+            self._task_access(c, u, s, task, 'read')
+            visible = set(execute(c, '''SELECT p.id FROM task_ayuza.projects p WHERE p.workspace_id=:w AND (
+                p.owner_user_id=:u OR EXISTS (SELECT 1 FROM task_ayuza.project_members m
+                WHERE m.project_id=p.id AND m.user_id=:u AND m.active))''', w=task['workspace_id'], u=u['id']).scalars().all())
+            out = []
+            for r in execute(c, '''SELECT * FROM task_ayuza.task_events WHERE task_id=:t ORDER BY occurred_at, id''',
+                             t=tid).mappings().all():
+                row = dict(r)
+                if row['project_id_snapshot'] not in visible:
+                    row['project_id_snapshot'] = None
+                    row['project_owner_id_snapshot'] = None
+                out.append(row)
+            return out
         return self.auth.protected(token, run)

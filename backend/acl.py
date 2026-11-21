@@ -34,7 +34,8 @@ SNAPSHOT_FIELDS = frozenset({'name', 'role', 'active', 'capability', 'timezone',
                              # M02.1 work objects: identifiers and enums only, never titles or text
                              'status', 'priority', 'archived', 'project_id', 'owner_user_id',
                              'result_owner_user_id', 'executor_team_id', 'assignee_user_id', 'fields',
-                             'parent_task_id', 'stage_id', 'label_id', 'checked', 'deleted', 'hidden', 'position'})
+                             'parent_task_id', 'stage_id', 'label_id', 'checked', 'deleted', 'hidden', 'position',
+                             'user_id'})
 
 
 class AclError(Exception):
