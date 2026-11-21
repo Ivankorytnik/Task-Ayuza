@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from backend.acl import AclError
+from backend.api_items import router as items_router
 from backend.api_work import router as work_router
 from backend.auth import AuthError, AuthService
 from backend.auth_http import configured_origin, router
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title='Task-Ayuza',lifespan=lifespan,debug=False)
 app.include_router(router)
 app.include_router(work_router)
+app.include_router(items_router)
 
 
 @app.middleware('http')
