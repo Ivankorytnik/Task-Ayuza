@@ -1,0 +1,11 @@
+{
+	auto_https disable_redirects
+}
+https://localhost:8443 {
+	tls internal
+	handle_path /demo/* {
+		root * /srv/demo
+		file_server
+	}
+	reverse_proxy backend:8000
+}
