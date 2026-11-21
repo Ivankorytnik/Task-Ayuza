@@ -1,0 +1,52 @@
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1b2430;background:#f3f5f8}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:10px 16px;background:#1f3a5f;color:#fff}
+.brand{font-weight:bold;font-size:18px}
+.tag{font-size:11px;font-weight:normal;background:#e8a317;color:#222;padding:2px 6px;border-radius:10px;margin-left:6px}
+nav{display:flex;gap:4px;flex:1;flex-wrap:wrap}
+nav button{background:transparent;color:#cfd9e6;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:14px}
+nav button.on{background:#fff;color:#1f3a5f;font-weight:bold}
+button{font-family:inherit;font-size:13px;padding:7px 12px;border:1px solid #b9c3d1;background:#fff;border-radius:6px;cursor:pointer}
+button:hover{background:#eef2f7}
+button.primary{background:#2c7be5;color:#fff;border-color:#2c7be5}
+button.primary:hover{background:#1f66c4}
+button.danger{color:#b3261e;border-color:#e3b3af}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
+#filters{display:flex;flex-wrap:wrap;gap:8px;padding:10px 16px;align-items:center}
+#filters input,#filters select,dialog input,dialog select,dialog textarea{font-family:inherit;font-size:13px;padding:6px 8px;border:1px solid #b9c3d1;border-radius:6px;background:#fff}
+main{padding:0 16px 24px}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #e6ebf1;vertical-align:top}
+th{background:#e9eef5;font-size:12px;text-transform:uppercase;color:#46556a}
+tr.row{cursor:pointer}tr.row:hover{background:#f6f9fd}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;margin:1px 2px 1px 0;background:#e6ebf1}
+.s-Новая{background:#e6ebf1}.s-Запланирована{background:#dbe8fb}.s-В\ работе{background:#d3f0dc}
+.s-Блокирована{background:#fbdcd9;color:#8a1c14}.s-Выполнена{background:#bfe6c9}.s-Отменена{background:#ddd;color:#555}
+.p-Критический{background:#b3261e;color:#fff}.p-Высокий{background:#f4b183}.p-Низкий{background:#eef}
+.warn{background:#fff1cc;color:#7a5600}.over{background:#fbdcd9;color:#8a1c14}
+.board{display:grid;grid-template-columns:repeat(6,minmax(190px,1fr));gap:10px;overflow-x:auto;padding-bottom:8px}
+.col{background:#e9eef5;border-radius:8px;padding:8px;min-height:240px}
+.col.drop{outline:2px dashed #2c7be5}
+.col h3{margin:2px 4px 8px;font-size:13px;display:flex;justify-content:space-between}
+.card{background:#fff;border-radius:8px;padding:8px;margin-bottom:8px;box-shadow:0 1px 2px rgba(0,0,0,.12);cursor:grab}
+.card .t{font-weight:bold;margin-bottom:4px}.card .m{font-size:12px;color:#46556a}
+.panel{background:#fff;border-radius:8px;padding:12px;margin-bottom:10px}
+.kpis{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.kpi{background:#fff;border-radius:8px;padding:10px 16px;min-width:130px}.kpi b{font-size:22px;display:block}
+dialog{border:0;border-radius:10px;padding:16px;width:min(720px,96vw);box-shadow:0 8px 30px rgba(0,0,0,.35)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h2{margin:0 0 10px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid label{display:flex;flex-direction:column;font-size:12px;color:#46556a;gap:3px}
+.grid .full{grid-column:1/-1}
+.row-end{display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap}
+.inline{display:flex;gap:6px;align-items:flex-start}.inline>*:first-child{flex:1}
+.rec{color:#b3261e;font-weight:bold}
+.rec::before{content:"";display:inline-block;width:10px;height:10px;background:#b3261e;border-radius:50%;margin-right:5px;animation:b 1s infinite}
+@keyframes b{50%{opacity:.2}}
+.dep{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #eef}
+.err{color:#b3261e;font-size:12px;margin-top:4px}
+.muted{color:#6b7a90;font-size:12px}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:8px 14px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none}
+#toast.on{opacity:1}
+@media(max-width:720px){.grid{grid-template-columns:1fr}th:nth-child(n+5),td:nth-child(n+5){display:none}}
