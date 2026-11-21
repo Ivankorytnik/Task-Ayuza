@@ -23,11 +23,11 @@ def test_n01_static_client_and_headers(client, service):
     page = client.get('/app/')
     assert page.status_code == 200 and page.headers['content-type'].startswith('text/html')
     csp = page.headers['content-security-policy']
-    assert "script-src 'self'" in csp and "default-src 'none'" in csp and "frame-ancestors 'none'" in csp and 'unsafe' not in csp
+    assert "script-src 'self'" in csp and "default-src 'none'" in csp and 'worker-src' not in csp and "frame-ancestors 'none'" in csp and 'unsafe' not in csp
     assert page.headers['x-content-type-options'] == 'nosniff' and page.headers['referrer-policy'] == 'same-origin'
     assert page.headers['cache-control'] == 'no-store'
     for path, kind in (('app.js', 'javascript'), ('logic.js', 'javascript'), ('styles.css', 'css'),
-                       ('manifest.webmanifest', 'json'), ('icon.svg', 'svg')):
+                       ('manifest.webmanifest', 'json'), ('icon.svg', 'svg'), ('sw.js', 'javascript')):
         response = client.get(f'/app/{path}')
         assert response.status_code == 200 and kind in response.headers['content-type'], path
     assert client.get('/app/missing.js').status_code == 404
@@ -88,3 +88,10 @@ def test_n07_gantt_and_calendar_views():
     app = (WEB_DIR / 'app.js').read_text(encoding='utf-8')
     assert 'ganttView' in app and 'calendarView' in app and 'ganttRows' in app and 'monthGrid' in app
     assert 'style:' not in app and 'innerHTML' not in app      # CSP forbids style attributes: bars are positioned through CSSOM
+
+
+def test_n08_service_worker_is_served_and_shell_only():
+    sw = (WEB_DIR / 'sw.js').read_text(encoding='utf-8')
+    assert "pathname.startsWith('/app/')" in sw and "request.method === 'GET'" in sw and "'/api/'" in sw
+    assert 'localStorage' not in sw and 'indexedDB' not in sw and 'Authorization' not in sw
+    assert "register('sw.js'" in (WEB_DIR / 'app.js').read_text(encoding='utf-8')

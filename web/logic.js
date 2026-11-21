@@ -16,6 +16,7 @@ export class ApiError extends Error {
 
 export function messageFor(status) {
   return ({
+    0: 'Нет связи. Данные на устройстве не сохраняются, повторите позже.',
     401: 'Войдите заново.',
     403: 'Недостаточно прав или запрос отклонён.',
     404: 'Не найдено или нет доступа.',
@@ -181,10 +182,13 @@ export class Api {
     const headers = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (mutate && this.csrf) headers['X-CSRF-Token'] = this.csrf;
-    const res = await this.fetch(path, {
-      method, headers, credentials: 'same-origin', cache: 'no-store',
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    let res;
+    try {
+      res = await this.fetch(path, {
+        method, headers, credentials: 'same-origin', cache: 'no-store',
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch { throw new ApiError(0); }            // offline or unreachable
     if (!res.ok) {
       if (res.status === 401) this.onAuthLost();
       throw new ApiError(res.status);

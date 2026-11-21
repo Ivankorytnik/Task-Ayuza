@@ -397,8 +397,9 @@ async function enter() {
 
 async function start() {
   try { await api.bootstrap(); await enter(); }            // an existing session cookie recovers a fresh CSRF token
-  catch { state.user = null; state.phase = 'login'; render(); }
+  catch (error) { state.user = null; state.phase = 'login'; state.error = error.status === 0 ? error.message : ''; render(); }
 }
 
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => { /* the app works without it */ });
 setInterval(refreshUnread, 60000);                      // polling instead of push; no storage involved
 start();
