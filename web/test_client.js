@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -93,7 +93,7 @@ await test('401 signals lost session, other errors keep it, nothing from the bod
 await test('requests: pagination, filters, optimistic version', async () => {
   const f = fakeFetch([]);
   const api = new Api(f);
-  await api.tasks('w1', 'done', 'last-id');
+  await api.tasks('w1', { status: 'done' }, 'last-id');
   await api.tasks('w1');
   await api.updateTask('t1', 7, { title: 'N' });
   assert.equal(f.calls[0].path, `/api/v1/workspaces/w1/tasks?limit=${PAGE}&status=done&after=last-id`);
@@ -258,6 +258,14 @@ await test('gantt: overdue, range, ticks per scale, today marker, groups, widths
 await test('diffChanges handles the start date', () => {
   assert.deepEqual(diffChanges({ title: 'a', start_date: null }, { title: 'a', start_date: '2026-12-01' }), { start_date: '2026-12-01' });
   assert.deepEqual(diffChanges({ title: 'a', start_date: '2026-12-01' }, { title: 'a', start_date: ' ' }), { start_date: null });
+});
+
+await test('task query carries only the filters that are set', () => {
+  assert.equal(taskQuery(50, {}, null), 'limit=50');
+  assert.equal(taskQuery(50, { mine: true, overdue: true, blocked: true, team: 't1', project: 'p1', status: 'new' }, 'x'),
+    'limit=50&status=new&mine=true&overdue=true&blocked=true&team_id=t1&project_id=p1&after=x');
+  assert.equal(taskQuery(50, { mine: false, team: '', project: '' }, null), 'limit=50');
+  assert.equal(filtersActive({ mine: false, team: '' }), false); assert.equal(filtersActive({ project: 'p' }), true); assert.equal(filtersActive(null), false);
 });
 
 console.log(`${passed} passed`);

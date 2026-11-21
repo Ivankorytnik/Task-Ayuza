@@ -89,8 +89,10 @@ def get_project(project_id: str, request: Request):
 
 @router.get('/workspaces/{workspace_id}/tasks')
 def list_tasks(workspace_id: str, request: Request, status: str | None = None, limit: int = 50,
-               after: str | None = None):
-    return work(request).list_tasks(token(request), workspace_id, status=status, limit=limit, after=after)
+               after: str | None = None, mine: bool = False, team_id: str | None = None,
+               project_id: str | None = None, overdue: bool = False, blocked: bool = False):
+    return work(request).list_tasks(token(request), workspace_id, status=status, limit=limit, after=after, mine=mine,
+                                    team_id=team_id, project_id=project_id, overdue=overdue, blocked=blocked)
 
 
 @router.get('/workspaces/{workspace_id}/snapshot')

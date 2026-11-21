@@ -217,6 +217,22 @@ export function snapshotItems(snapshot) {
   return SNAPSHOT_LABELS.filter(([key]) => Number.isInteger(snapshot[key])).map(([key, text]) => ({ key, text, value: snapshot[key] }));
 }
 
+// Only the filters that are set go into the query; an empty filter is not sent at all.
+export function taskQuery(limit, filters, after) {
+  const q = new URLSearchParams({ limit: String(limit) });
+  const f = filters || {};
+  if (f.status) q.set('status', f.status);
+  if (f.mine) q.set('mine', 'true');
+  if (f.overdue) q.set('overdue', 'true');
+  if (f.blocked) q.set('blocked', 'true');
+  if (f.team) q.set('team_id', f.team);
+  if (f.project) q.set('project_id', f.project);
+  if (after) q.set('after', after);
+  return q.toString();
+}
+
+export const filtersActive = (f) => Boolean(f && (f.mine || f.overdue || f.blocked || f.team || f.project));
+
 export class Api {
   constructor(fetchImpl, onAuthLost = () => {}) {
     this.fetch = fetchImpl;
@@ -258,12 +274,7 @@ export class Api {
   workspaces() { return this.request('GET', '/api/v1/workspaces'); }
   projects(ws) { return this.request('GET', `/api/v1/workspaces/${ws}/projects?limit=200`); }
   directory(ws) { return this.request('GET', `/api/v1/workspaces/${ws}/directory`); }
-  tasks(ws, status, after) {
-    const q = new URLSearchParams({ limit: String(PAGE) });
-    if (status) q.set('status', status);
-    if (after) q.set('after', after);
-    return this.request('GET', `/api/v1/workspaces/${ws}/tasks?${q}`);
-  }
+  tasks(ws, filters, after) { return this.request('GET', `/api/v1/workspaces/${ws}/tasks?${taskQuery(PAGE, filters, after)}`); }
   createTask(ws, payload) { return this.request('POST', `/api/v1/workspaces/${ws}/tasks`, payload, true); }
   task(id) { return this.request('GET', `/api/v1/tasks/${id}`); }
   updateTask(id, version, changes) {
