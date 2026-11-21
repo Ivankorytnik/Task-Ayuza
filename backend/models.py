@@ -346,7 +346,8 @@ Labels = Table('labels',Base.metadata,
     Column('name',String(60),nullable=False),
     Column('version',BigInteger,nullable=False,server_default=text('1')),
     _ts('created_at'),
-    UniqueConstraint('workspace_id','id',name='uq_labels_workspace_id'),schema=SCHEMA)
+    UniqueConstraint('workspace_id','id',name='uq_labels_workspace_id'),
+    Index('uq_labels_workspace_name','workspace_id',text('lower(name)'),unique=True),schema=SCHEMA)
 ProjectStages = Table('project_stages',Base.metadata,
     Column('id',UUID(as_uuid=True),primary_key=True),
     Column('workspace_id',UUID(as_uuid=True),nullable=False),
