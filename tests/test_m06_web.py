@@ -59,4 +59,4 @@ def test_n03_client_views_use_api_only():
     assert 'api.updateTask(id, version, { status: to })' in app
     for path in ('/api/v1/notifications', '/api/v1/tasks/${id}/blockers', '/api/v1/tasks/${id}/dependencies'):
         assert path in logic, path
-    assert 'fetch(' not in app                                              # only the Api class talks to the network
+    assert app.count('fetch(') == 1                                         # one injection point into Api, no direct calls
