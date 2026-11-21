@@ -1,0 +1,85 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  demo:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Demo logic tests (skipped until demo/ exists in main)
+        run: |
+          if [ -f demo/test_logic.js ]; then node demo/test_logic.js; else echo "demo/ not present"; fi
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements-m01.txt
+      - run: pip install -r requirements-m01.txt
+      - name: M01 acceptance on a disposable PostgreSQL cluster
+        run: |
+          PGBIN="$(dirname "$(ls /usr/lib/postgresql/*/bin/initdb | sort -V | tail -1)")"
+          echo "Using $PGBIN"
+          python tests/run_m01_acceptance.py --pg-bin "$PGBIN"
+  local-stack:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ayuza_admin
+          POSTGRES_PASSWORD: ci-admin-synthetic
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ayuza_admin" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      TA_DB_HOST: 127.0.0.1
+      TA_DB_PORT: '5432'
+      TA_ADMIN_USER: ayuza_admin
+      TA_ADMIN_PASSWORD: ci-admin-synthetic
+      TA_MIGRATOR_PW: ci-migrator-synthetic
+      TA_RUNTIME_PW: ci-runtime-synthetic
+      TA_BACKUP_PW: ci-backup-synthetic
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements-m01.txt
+      - run: pip install -r requirements-m01.txt
+      - name: Initialise local database (roles, migrations, grants), twice to prove idempotency
+        run: |
+          python scripts/local_init.py
+          python scripts/local_init.py
+      - name: Start backend and check it answers
+        env:
+          TASK_AYUZA_DATABASE_URL: postgresql+psycopg://task_ayuza_runtime:ci-runtime-synthetic@127.0.0.1:5432/task_ayuza_test
+          TASK_AYUZA_ORIGIN: https://localhost:8443
+          TASK_AYUZA_AUTH_HMAC_KEY: 'a0000000000000000000000000000000000000000000000000000000000000b1'
+        run: |
+          python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
+          ok=0
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:8000/openapi.json -o openapi.json; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != 1 ]; then echo "backend did not answer"; cat uvicorn.log; exit 1; fi
+          python -c "import json; print(sorted(json.load(open('openapi.json'))['paths']))"
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/auth/me)
+          echo "GET /api/v1/auth/me without session: $code"
+          test "$code" = 401 || test "$code" = 403 || { cat uvicorn.log; exit 1; }
