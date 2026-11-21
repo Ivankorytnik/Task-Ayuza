@@ -400,7 +400,7 @@ class ItemsService(WorkService):
             if expected is None or expected != comment['version']:
                 raise AclError(409, 'Version conflict')
             execute(c, '''INSERT INTO task_ayuza.comment_revisions (id, comment_id, body, version)
-                VALUES (:id, :c, :b, :v)''', id=uuid.uuid4(), c=cid, b=comment['body'], v=comment['version'])
+                VALUES (:id, :cid, :b, :v)''', id=uuid.uuid4(), cid=cid, b=comment['body'], v=comment['version'])
             row = one(c, '''UPDATE task_ayuza.comments SET body=:b, version=version+1, edited_at=clock_timestamp()
                 WHERE id=:id AND version=:v RETURNING version''', b=body, id=cid, v=expected)
             if row is None:

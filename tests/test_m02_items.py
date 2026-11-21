@@ -73,7 +73,7 @@ def test_d02_stages_and_task_stage(service, acl, items, w, migrator):
     assert status(lambda: items.set_task_stage(member.token, member.csrf, t, st['id'], 2)) == 409
     assert items.list_stages(pm.token, pid) == []
     items.set_stage_archived(pm.token, pm.csrf, st['id'], False, archived['version'])
-    violates(migrator, "UPDATE task_ayuza.tasks SET stage_id=:s WHERE id=:id", '23503', id=standalone, s=st['id'])
+    violates(migrator, "UPDATE task_ayuza.tasks SET stage_id=:s WHERE id=:id", '23514', id=standalone, s=st['id'])
 
 
 def test_d03_subtasks(service, acl, items, w, migrator):
@@ -90,7 +90,7 @@ def test_d03_subtasks(service, acl, items, w, migrator):
     assert status(lambda: new_task(items, a, w, parent_task_id=uuid.uuid4())) == 404
     # database guards: self parent, cycle, project change under a parent
     violates(migrator, "UPDATE task_ayuza.tasks SET parent_task_id=id WHERE id=:id", '23514', id=parent)
-    violates(migrator, "UPDATE task_ayuza.tasks SET parent_task_id=:c WHERE id=:p", '23514', p=parent, c=child['id'])
+    violates(migrator, "UPDATE task_ayuza.tasks SET parent_task_id=:ch WHERE id=:p", '23514', p=parent, ch=child['id'])
     violates(migrator, "UPDATE task_ayuza.tasks SET project_id=:pr WHERE id=:p", '23514', p=parent, pr=pid)
     audit_new = rows(migrator, "SELECT \"new\" FROM task_ayuza.audit_events WHERE entity_id=:id AND action='task.created'", id=child['id'])[0]['new']
     assert audit_new['parent_task_id'] == str(parent)
@@ -138,7 +138,7 @@ def test_d05_comments(service, acl, items, w, migrator):
     assert edited['version'] == 2
     assert items.edit_comment(author.token, author.csrf, c1['id'], 2, 'Synthetic edited body')['changed'] is False
     assert status(lambda: items.edit_comment(author.token, author.csrf, c1['id'], 1, 'Stale')) == 409
-    revisions = rows(migrator, 'SELECT body, version FROM task_ayuza.comment_revisions WHERE comment_id=:c', c=c1['id'])
+    revisions = rows(migrator, 'SELECT body, version FROM task_ayuza.comment_revisions WHERE comment_id=:cid', cid=c1['id'])
     assert revisions == [{'body': 'Synthetic comment body', 'version': 1}]
     listed = items.list_comments(other.token, t)
     assert [x['body'] for x in listed] == ['Synthetic edited body']
