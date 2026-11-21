@@ -43,7 +43,7 @@ def test_j01_release_metadata_is_real_or_undefined(service, ex, w, migrator):
 
 
 def test_j02_export_rights_rows_and_formula_safety(service, acl, ex, w, migrator):
-    a, other, stranger = join(acl, w, person(service)), join(acl, w, person(service)), person(service)
+    a, other, stranger = join(acl, w, person(service), team=False), join(acl, w, person(service), team=False), person(service)
     t1 = new_task(ex, a, w, title='=SUM(A1) Привет')['id']
     t2 = new_task(ex, a, w, title='Обычная задача')['id']
     hidden = new_task(ex, other, w, title='Чужая закрытая')['id']
