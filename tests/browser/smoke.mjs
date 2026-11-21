@@ -21,6 +21,8 @@ console.log('DONE opts:', await ev(`[...document.querySelectorAll('.col[data-sta
 await ev(`document.querySelector('.ttitle').click()`); await wait(800); console.log('DETAIL:', (await text()).slice(-300));
 await click('Риски'); await wait(800); console.log('RISKS:', await text());
 await click('Связанные задачи'); await wait(600); console.log('RISKLINKS:', await ev(`document.querySelector('main').innerText.includes('Отвязать')+' hidden '+document.querySelector('main').innerText.includes('Скрытых связей: 1')`));
+await click('Гант'); await wait(600); console.log('GANTT:', await ev(`document.querySelectorAll('.gbar').length+' bars, first width '+document.querySelector('.gbar').style.width+', rendered px '+Math.round(document.querySelector('.gbar').getBoundingClientRect().width)`));
+await click('Календарь'); await wait(600); console.log('CAL:', await ev(`document.querySelectorAll('.cell').length+' cells, tasks '+document.querySelectorAll('.ctask').length`));
 await click('Уведомления'); await wait(800); await ev("[...document.querySelectorAll('button')].find(b=>b.textContent.startsWith('Список')).click()"); await wait(600); await ev("document.querySelector('tbody tr, .tcard .ttitle, td a, td button')?.click()"); await wait(800); console.log('NOTES:', await text());
 console.log('ERRORS:', logs.length? logs.join('\n'):'none');
 console.log('BLOCKERS:', await ev(`document.querySelector('main').innerText.includes('Ждём договор')+' deps '+document.querySelector('main').innerText.includes('Зависит от')+' remove '+document.querySelector('main').innerText.includes('Убрать')+' resolve '+document.querySelector('main').innerText.includes('Снять блокер')`)); ch.kill(); process.exit(0);

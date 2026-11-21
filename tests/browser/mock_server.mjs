@@ -2,7 +2,7 @@ import http from 'node:http'; import fs from 'node:fs'; import path from 'node:p
 const WEB=new URL('../../web/', import.meta.url).pathname;
 const csp="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 const J=(res,o)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(o));};
-const task=(i,st)=>({id:'t'+i,title:'Задача '+i,status:st,priority:'normal',version:1,due_date:null,description:''});
+const task=(i,st)=>({id:'t'+i,title:'Задача '+i,status:st,priority:'normal',version:1,start_date:i===1?'2026-11-10':null,due_date:i===3?null:'2026-11-'+(10+i*5),description:''});
 http.createServer((req,res)=>{
   const u=req.url.split('?')[0];
   if(u.startsWith('/app/')||u==='/app'){const f=path.join(WEB,u==='/app/'||u==='/app'?'index.html':u.slice(5));

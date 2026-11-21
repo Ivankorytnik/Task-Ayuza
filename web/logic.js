@@ -130,6 +130,46 @@ export function dependencyPayload(taskId, otherId, direction, reason) {
   return { payload: { blocker_task_id: blocked ? otherId : taskId, dependent_task_id: blocked ? taskId : otherId, reason: text } };
 }
 
+const DAY = 86400000;
+const dayNumber = (iso) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / DAY;
+const hasDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+// Gantt rows: a bar from start to due; one date alone gives a one-day bar; tasks without dates go to `undated`.
+export function ganttRows(tasks) {
+  const rows = []; const undated = [];
+  for (const t of tasks) {
+    const start = hasDate(t.start_date) ? t.start_date : t.due_date; const end = hasDate(t.due_date) ? t.due_date : t.start_date;
+    if (!hasDate(start) || !hasDate(end)) { undated.push(t); continue; }
+    rows.push({ task: t, from: dayNumber(start), to: Math.max(dayNumber(end), dayNumber(start)) });
+  }
+  if (!rows.length) return { rows: [], undated, span: 0, min: 0 };
+  const min = Math.min(...rows.map((r) => r.from)); const max = Math.max(...rows.map((r) => r.to));
+  const span = max - min + 1;
+  return { rows: rows.map((r) => ({ task: r.task, left: ((r.from - min) / span) * 100, width: ((r.to - r.from + 1) / span) * 100 })), undated, span, min };
+}
+
+// Month grid starting on Monday; each cell holds the tasks due that day.
+export function monthGrid(year, month, tasks) {
+  const first = Date.UTC(year, month, 1) / DAY;
+  const lead = (new Date(Date.UTC(year, month, 1)).getUTCDay() + 6) % 7;
+  const days = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const cells = [];
+  for (let i = 0; i < Math.ceil((lead + days) / 7) * 7; i += 1) {
+    const day = i - lead + 1;
+    if (day < 1 || day > days) { cells.push({ day: null, tasks: [] }); continue; }
+    const iso = new Date((first + day - 1) * DAY).toISOString().slice(0, 10);
+    cells.push({ day, iso, tasks: tasks.filter((t) => t.due_date === iso) });
+  }
+  return cells;
+}
+
+export function shiftMonth(year, month, delta) {
+  const d = new Date(Date.UTC(year, month + delta, 1));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() };
+}
+
+export const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+
 export class Api {
   constructor(fetchImpl, onAuthLost = () => {}) {
     this.fetch = fetchImpl;

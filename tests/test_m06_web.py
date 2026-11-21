@@ -82,3 +82,9 @@ def test_n06_links_views_use_api():
     assert 'resolveBlocker' in app and 'removeDependency' in app and 'linkRiskTask' in app and 'dependencyPayload' in app
     for path in ('/api/v1/blockers/${id}/resolved', '/api/v1/dependencies', '/api/v1/risks/${riskId}/tasks/${taskId}'):
         assert path in logic, path
+
+
+def test_n07_gantt_and_calendar_views():
+    app = (WEB_DIR / 'app.js').read_text(encoding='utf-8')
+    assert 'ganttView' in app and 'calendarView' in app and 'ganttRows' in app and 'monthGrid' in app
+    assert 'style:' not in app and 'innerHTML' not in app      # CSP forbids style attributes: bars are positioned through CSSOM
