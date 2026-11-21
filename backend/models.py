@@ -1,4 +1,4 @@
-"""M01.1 foundation, M01.2 auth and M01.3 ACL metadata. No project/task tables."""
+"""M01.1 foundation, M01.2 auth, M01.3 ACL and M01.4 MFA/grants metadata. No project/task tables."""
 from __future__ import annotations
 
 import uuid
@@ -82,7 +82,7 @@ class AuditEvent(Base):
 
 
 # Core tables used by the auth service. Explicit metadata, never create_all on startup.
-from sqlalchemy import Table, Column, BigInteger, Boolean, ForeignKeyConstraint, LargeBinary, Text, UniqueConstraint
+from sqlalchemy import Table, Column, BigInteger, Boolean, ForeignKeyConstraint, Integer, LargeBinary, Text, UniqueConstraint
 
 Users = Table('users', Base.metadata,
     Column('id',UUID(as_uuid=True),primary_key=True),
@@ -111,6 +111,7 @@ Sessions = Table('sessions',Base.metadata,
     Column('absolute_expires_at',DateTime(timezone=True),nullable=False),
     Column('revoked_at',DateTime(timezone=True)),
     Column('auth_version',BigInteger),
+    Column('mfa_verified_at',DateTime(timezone=True)),
     CheckConstraint('octet_length(token_hash)=32'),CheckConstraint('octet_length(csrf_hash)=32'),
     CheckConstraint("kind IN ('prelogin','password','normal')"),
     CheckConstraint("(kind='prelogin' AND user_id IS NULL AND auth_version IS NULL) OR (kind<>'prelogin' AND user_id IS NOT NULL AND auth_version IS NOT NULL AND auth_version>0)",name='ck_sessions_scope'),
@@ -222,3 +223,50 @@ SystemRoleAssignments = Table('system_role_assignments',Base.metadata,
     CheckConstraint("role_code IN ('system_admin','risk_controller')",name='ck_system_role_code'),
     CheckConstraint('granted_by IS NULL OR granted_by <> user_id',name='ck_system_role_no_self_grant'),
     CheckConstraint('version >= 1',name='ck_system_role_version'),schema=SCHEMA)
+
+
+# M01.4 MFA, administrative grants (workspace scope only), one-time setup marker.
+UserMfa = Table('user_mfa',Base.metadata,
+    Column('user_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id'),primary_key=True),
+    Column('encrypted_secret',LargeBinary,nullable=False),
+    Column('enabled_at',DateTime(timezone=True)),
+    Column('last_used_step',BigInteger),
+    Column('failed_count',Integer,nullable=False,server_default=text('0')),
+    Column('locked_until',DateTime(timezone=True)),
+    Column('version',BigInteger,nullable=False,server_default=text('1')),
+    Column('created_at',DateTime(timezone=True),nullable=False,server_default=text('now()')),
+    Column('updated_at',DateTime(timezone=True),nullable=False,server_default=text('now()')),
+    CheckConstraint('octet_length(encrypted_secret) = 48',name='ck_user_mfa_secret'),
+    CheckConstraint('version >= 1',name='ck_user_mfa_version'),schema=SCHEMA)
+MfaBackupCodes = Table('mfa_backup_codes',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('user_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id'),nullable=False),
+    Column('code_hash',LargeBinary,nullable=False),
+    Column('used_at',DateTime(timezone=True)),
+    Column('created_at',DateTime(timezone=True),nullable=False,server_default=text('now()')),
+    UniqueConstraint('user_id','code_hash',name='uq_mfa_backup_user_hash'),
+    CheckConstraint('octet_length(code_hash) = 32',name='ck_mfa_backup_hash'),
+    Index('ix_mfa_backup_user','user_id'),schema=SCHEMA)
+AdministrativeGrants = Table('administrative_grants',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('grantee_user_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id'),nullable=False),
+    Column('workspace_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.workspaces.id'),nullable=False),
+    Column('capability',String(20),nullable=False),
+    Column('kind',String(10),nullable=False),
+    Column('approver_user_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id'),nullable=False),
+    Column('reason',String(500),nullable=False),
+    Column('valid_from',DateTime(timezone=True),nullable=False),
+    Column('expires_at',DateTime(timezone=True),nullable=False),
+    Column('revoked_at',DateTime(timezone=True)),
+    Column('revoked_by',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id')),
+    Column('version',BigInteger,nullable=False,server_default=text('1')),
+    Column('created_at',DateTime(timezone=True),nullable=False,server_default=text('now()')),
+    CheckConstraint('approver_user_id <> grantee_user_id',name='ck_ag_no_self_approval'),
+    CheckConstraint('version >= 1',name='ck_ag_version'),
+    Index('ix_ag_grantee_workspace','grantee_user_id','workspace_id'),
+    Index('ix_ag_workspace','workspace_id'),schema=SCHEMA)
+SetupState = Table('setup_state',Base.metadata,
+    Column('singleton',Boolean,primary_key=True,server_default=text('true')),
+    Column('completed_at',DateTime(timezone=True),nullable=False,server_default=text('now()')),
+    Column('owner_user_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id'),nullable=False),
+    CheckConstraint('singleton IS TRUE',name='ck_setup_singleton'),schema=SCHEMA)

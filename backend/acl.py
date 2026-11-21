@@ -9,9 +9,9 @@ operation already past its check completes before the revocation can commit. Dea
 serialization failures are retried by AuthService.transaction (at most two retries); the
 audit event is written in the same transaction, so a retry never duplicates it.
 
-Not in M01.3 (deferred to M01.4): MFA, independent approval, administrative grants,
-bootstrap of the first system administrator / workspace administrator, delegation of
-assign, archive_restore, manage_access and export. Project/task ACL awaits those tables.
+M01.4 adds MFA for administrative mutations and administrative grants (backend/grants.py).
+Still open: delegation of assign, archive_restore, manage_access and export through
+workspace_team_access, bootstrap of the first workspace administrator, project/task ACL.
 """
 from __future__ import annotations
 
@@ -21,13 +21,16 @@ import uuid
 from sqlalchemy.exc import IntegrityError
 
 from backend.auth import AuthService, execute, one
+from backend.mfa import mfa_fresh
 
 CAPABILITIES = frozenset({'read', 'comment', 'content_edit', 'link', 'assign',
                           'archive_restore', 'manage_access', 'export'})
+GRANT_CAPABILITIES = CAPABILITIES | {'audit_read'}
 # Capabilities a workspace administrator may hand to a team member in M01.3.
 DELEGABLE = frozenset({'read', 'comment', 'content_edit', 'link'})
 WORKSPACE_ROLES = frozenset({'participant', 'observer', 'workspace_admin'})
-SNAPSHOT_FIELDS = frozenset({'name', 'role', 'active', 'capability', 'timezone', 'revoked'})
+SNAPSHOT_FIELDS = frozenset({'name', 'role', 'active', 'capability', 'timezone', 'revoked',
+                             'kind', 'expires_at', 'role_code'})
 
 
 class AclError(Exception):
@@ -93,10 +96,9 @@ def audit(c, u, s, *, request_id, entity_kind, entity_id, action, workspace_id=N
 # ---- authorization primitives (call inside an AuthService.protected transaction) ----
 
 def has_system_role(c, user_id, role) -> bool:
-    """Plain read inside the caller's transaction (no row lock: runtime holds only SELECT here).
+    """Plain read inside the caller's transaction (no row lock).
 
-    System roles gate structure creation only, never workspace content. Their issue and
-    revoke procedure, with its own serialization, is M01.4.
+    System roles gate structure creation and access approval, never workspace content.
     """
     return execute(c, '''SELECT 1 FROM task_ayuza.system_role_assignments
         WHERE user_id=:u AND role_code=:r AND revoked_at IS NULL''',
@@ -143,6 +145,17 @@ def has_capability(c, user_id, workspace_id, capability) -> bool:
         WHERE workspace_id=:w AND user_id=:u AND capability=:cap AND revoked_at IS NULL
           AND team_id = ANY(CAST(:teams AS uuid[])) ORDER BY id FOR SHARE''',
                    w=workspace_id, u=user_id, cap=capability, teams=teams).first() is not None
+
+
+def grant_capability(c, user_id, workspace_id, capability) -> bool:
+    """Active administrative grant (D03) for exactly this workspace and capability, share-locked.
+
+    Time is the database clock at check time: expired and revoked grants never apply.
+    """
+    return execute(c, '''SELECT id FROM task_ayuza.administrative_grants
+        WHERE grantee_user_id=:u AND workspace_id=:w AND capability=:cap AND revoked_at IS NULL
+          AND valid_from <= clock_timestamp() AND expires_at > clock_timestamp()
+        ORDER BY id FOR SHARE''', u=user_id, w=workspace_id, cap=capability).first() is not None
 
 
 def require_member(c, user_id, workspace_id):
@@ -215,12 +228,21 @@ def _upsert(c, u, s, *, table, keys, values, entity_kind, actions, workspace_id,
     return {'id': updated['id'], 'version': updated['version'], 'created': False}
 
 
+def mfa_mutation(auth: AuthService, token, csrf, run):
+    """Administrative mutation: valid session, CSRF and a fresh MFA verification (D03)."""
+    def guarded(c, u, s):
+        if not mfa_fresh(c, s):
+            raise AclError(403, 'MFA required')
+        return run(c, u, s)
+    return auth.protected(token, guarded, csrf=csrf, mutation=True)
+
+
 class AclService:
     def __init__(self, auth: AuthService):
         self.auth = auth
 
     def _mutation(self, token, csrf, run):
-        return self.auth.protected(token, run, csrf=csrf, mutation=True)
+        return mfa_mutation(self.auth, token, csrf, run)
 
     # ---- generic hook for future objects (M02): capability-checked transaction ----
 
@@ -230,10 +252,14 @@ class AclService:
             raise AclError(422, 'Invalid capability')
 
         def run(c, u, s):
-            require_member(c, u['id'], wid)
-            if not has_capability(c, u['id'], wid, capability):
-                raise _forbidden()
-            return operation(c, u, s)
+            member = membership(c, u['id'], wid)
+            if member is not None and has_capability(c, u['id'], wid, capability):
+                return operation(c, u, s)
+            if grant_capability(c, u['id'], wid, capability):
+                if not mfa_fresh(c, s):
+                    raise AclError(403, 'MFA required')  # an administrative grant needs MFA
+                return operation(c, u, s)
+            raise _forbidden() if member is not None else _not_found()
         return self.auth.protected(token, run, csrf=csrf, mutation=mutation)
 
     # ---- reads: only workspaces where the caller is an active member ----

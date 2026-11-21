@@ -78,12 +78,19 @@ def rows(migrator, statement, **params):
         return [dict(r) for r in execute(c, statement, **params).mappings()]
 
 
+def mark_mfa(migrator, who):
+    """Fixture-only: the M01.3 scenarios predate MFA, so mark the session as MFA-verified."""
+    admin_sql(migrator, 'UPDATE task_ayuza.sessions SET mfa_verified_at = clock_timestamp() WHERE user_id=:u', u=who.id)
+
+
 def make_sysadmin(migrator, who):
+    mark_mfa(migrator, who)
     admin_sql(migrator, '''INSERT INTO task_ayuza.system_role_assignments (id, user_id, role_code, reason)
         VALUES (:id, :u, 'system_admin', 'synthetic bootstrap')''', id=uuid.uuid4(), u=who.id)
 
 
 def make_workspace_admin(migrator, workspace_id, who):
+    mark_mfa(migrator, who)
     admin_sql(migrator, '''INSERT INTO task_ayuza.workspace_members (id, workspace_id, user_id, role)
         VALUES (:id, :w, :u, 'workspace_admin')''', id=uuid.uuid4(), w=workspace_id, u=who.id)
 
@@ -136,9 +143,6 @@ def test_runtime_privileges_and_constraints(service, acl, migrator):
     for table in new_tables:
         violates(runtime, f'TRUNCATE task_ayuza.{table}', '42501')
         violates(runtime, f'DELETE FROM task_ayuza.{table} WHERE false', '42501')
-    violates(runtime, '''INSERT INTO task_ayuza.system_role_assignments (id, user_id, role_code, reason)
-        VALUES (gen_random_uuid(), :u, 'system_admin', 'self issue')''', '42501', u=w.outsider.id)
-    violates(runtime, "UPDATE task_ayuza.system_role_assignments SET reason='x' WHERE false", '42501')
 
     backup = create_engine(_test_url('TASK_AYUZA_TEST_BACKUP_URL'), hide_parameters=True)
     try:
