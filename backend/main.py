@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from backend.acl import AclError
+from backend.acl import AclError, AclService
 from backend.api_items import router as items_router
 from backend.api_ops import router as ops_router
 from backend.api_work import router as work_router
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
             raise ConfigurationError('Authentication key is not configured correctly') from None
         app.state.auth = AuthService(engine,key)
         app.state.work = ExportsService(app.state.auth)
+        app.state.acl = AclService(app.state.auth)
         app.state.auth_origin = origin
         yield
     finally:
