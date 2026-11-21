@@ -1,4 +1,5 @@
 """Read-only schema gate and M01.2 auth routes; no administrative API."""
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,6 +18,7 @@ from backend.auth_http import configured_origin, router
 from backend.config import ConfigurationError
 from backend.db import make_engine, verify_schema
 from backend.exports import ExportsService
+from backend.scheduler import outbox_interval, outbox_loop
 
 
 @asynccontextmanager
@@ -35,7 +37,15 @@ async def lifespan(app: FastAPI):
         app.state.work = ExportsService(app.state.auth)
         app.state.acl = AclService(app.state.auth)
         app.state.auth_origin = origin
-        yield
+        interval = outbox_interval()
+        app.state.outbox_stats = {}
+        task = asyncio.create_task(outbox_loop(app.state.work, interval, app.state.outbox_stats)) if interval else None
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
     finally:
         engine.dispose()
 

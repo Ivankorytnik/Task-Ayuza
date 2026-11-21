@@ -31,6 +31,7 @@ services:
       TASK_AYUZA_DATABASE_URL: postgresql+psycopg://task_ayuza_runtime:${TA_RUNTIME_PW}@db:5432/task_ayuza_test
       TASK_AYUZA_ORIGIN: https://localhost:8443
       TASK_AYUZA_AUTH_HMAC_KEY: ${TA_HMAC_KEY}
+      TASK_AYUZA_OUTBOX_INTERVAL: "30"
     depends_on:
       init: {condition: service_completed_successfully}
   proxy:
