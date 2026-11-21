@@ -172,6 +172,13 @@ export function shiftMonth(year, month, delta) {
 
 export const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 
+export const SNAPSHOT_LABELS = [['total', 'Всего'], ['active', 'Активные'], ['in_progress', 'В работе'], ['done', 'Выполнены'],
+  ['blocked', 'Заблокированы'], ['overdue', 'Просрочены'], ['upcoming', 'Ближайшие сроки'], ['no_due_date', 'Без срока'], ['no_project', 'Без проекта']];
+
+export function snapshotItems(snapshot) {
+  return SNAPSHOT_LABELS.filter(([key]) => Number.isInteger(snapshot[key])).map(([key, text]) => ({ key, text, value: snapshot[key] }));
+}
+
 export class Api {
   constructor(fetchImpl, onAuthLost = () => {}) {
     this.fetch = fetchImpl;
@@ -248,5 +255,6 @@ export class Api {
   removeDependency(id, version, reason) { return this.request('POST', `/api/v1/dependencies/${id}/remove`, { expected_version: version, reason }, true); }
   riskLinks(id) { return this.request('GET', `/api/v1/risks/${id}/links`); }
   linkRiskTask(riskId, taskId, linked) { return this.request('PUT', `/api/v1/risks/${riskId}/tasks/${taskId}`, { linked }, true); }
+  snapshot(ws, includeSubtasks) { return this.request('GET', `/api/v1/workspaces/${ws}/snapshot?include_subtasks=${includeSubtasks ? 'true' : 'false'}`); }
   addComment(id, body) { return this.request('POST', `/api/v1/tasks/${id}/comments`, { body }, true); }
 }

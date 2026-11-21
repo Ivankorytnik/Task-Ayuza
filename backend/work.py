@@ -33,6 +33,20 @@ PROJECT_ROLES = ('observer', 'participant', 'project_manager')
 TERMINAL = frozenset({'done', 'cancelled'})
 REOPEN = frozenset({'new', 'planned', 'in_progress'})
 TASK_FIELDS = frozenset({'title', 'description', 'priority', 'status', 'start_date', 'due_date'})
+READABLE_TASKS = '''(CAST(:everything AS boolean) OR (CAST(:member AS boolean) AND (
+                       CAST(:u AS uuid) IN (t.created_by_user_id, t.result_owner_user_id, t.assignee_user_id)
+                       OR EXISTS (SELECT 1 FROM task_ayuza.task_access_grants g
+                                  WHERE g.task_id=t.id AND g.user_id=:u AND g.revoked_at IS NULL)
+                       OR EXISTS (SELECT 1 FROM task_ayuza.team_members tm JOIN task_ayuza.teams tt ON tt.id = tm.team_id
+                                  WHERE tm.user_id=:u AND tm.team_id=t.executor_team_id AND tm.active AND tt.active)
+                       OR (t.project_id IS NOT NULL AND (
+                           EXISTS (SELECT 1 FROM task_ayuza.project_members pm
+                                   WHERE pm.project_id=t.project_id AND pm.user_id=:u AND pm.active)
+                           OR EXISTS (SELECT 1 FROM task_ayuza.projects pr
+                                      WHERE pr.id=t.project_id AND pr.owner_user_id=:u))))))'''
+
+
+UPCOMING_DAYS = 7   # the 'nearest due dates' window of the snapshot, in workspace-local days
 PROJECT_FIELDS = frozenset({'title', 'description', 'start_date', 'due_date'})
 
 
@@ -644,23 +658,45 @@ class WorkService:
             everything = _grant_ok(c, s, u['id'], wid, 'read')
             if member is None and not everything:
                 raise _not_found()
-            rows = execute(c, '''SELECT t.* FROM task_ayuza.tasks t
+            rows = execute(c, f'''SELECT t.* FROM task_ayuza.tasks t
                 WHERE t.workspace_id=:w AND t.archived_at IS NULL AND (CAST(:status AS text) IS NULL OR t.status=CAST(:status AS text))
                   AND (CAST(:after AS uuid) IS NULL OR t.id > CAST(:after AS uuid))
-                  AND (CAST(:everything AS boolean) OR (CAST(:member AS boolean) AND (
-                       CAST(:u AS uuid) IN (t.created_by_user_id, t.result_owner_user_id, t.assignee_user_id)
-                       OR EXISTS (SELECT 1 FROM task_ayuza.task_access_grants g
-                                  WHERE g.task_id=t.id AND g.user_id=:u AND g.revoked_at IS NULL)
-                       OR EXISTS (SELECT 1 FROM task_ayuza.team_members tm JOIN task_ayuza.teams tt ON tt.id = tm.team_id
-                                  WHERE tm.user_id=:u AND tm.team_id=t.executor_team_id AND tm.active AND tt.active)
-                       OR (t.project_id IS NOT NULL AND (
-                           EXISTS (SELECT 1 FROM task_ayuza.project_members pm
-                                   WHERE pm.project_id=t.project_id AND pm.user_id=:u AND pm.active)
-                           OR EXISTS (SELECT 1 FROM task_ayuza.projects pr
-                                      WHERE pr.id=t.project_id AND pr.owner_user_id=:u))))))
+                  AND {READABLE_TASKS}
                 ORDER BY t.id LIMIT :n''', w=wid, u=u['id'], status=status, after=after, n=limit,
                            everything=everything, member=member is not None).mappings().all()
             return [dict(r) for r in rows]
+        return self.auth.protected(token, run)
+
+    def snapshot(self, token, workspace_id, include_subtasks=False):
+        """The 'Now' cut: counts over the tasks the caller can read (the same predicate as the list, so hidden tasks
+        change no number). Open means not done and not cancelled; 'today' is the date in the workspace time zone."""
+        wid = as_uuid(workspace_id)
+        if not isinstance(include_subtasks, bool):
+            raise AclError(422, 'Invalid value')
+
+        def run(c, u, s):
+            member = membership(c, u['id'], wid)
+            everything = _grant_ok(c, s, u['id'], wid, 'read')
+            if member is None and not everything:
+                raise _not_found()
+            row = execute(c, f'''SELECT count(*) AS total,
+                count(*) FILTER (WHERE t.status NOT IN ('done','cancelled')) AS active,
+                count(*) FILTER (WHERE t.status = 'in_progress') AS in_progress,
+                count(*) FILTER (WHERE t.status = 'done') AS done,
+                count(*) FILTER (WHERE t.status = 'blocked') AS blocked,
+                count(*) FILTER (WHERE t.status NOT IN ('done','cancelled') AND t.due_date < d.today) AS overdue,
+                count(*) FILTER (WHERE t.status NOT IN ('done','cancelled') AND t.due_date >= d.today
+                                   AND t.due_date <= d.today + CAST(:days AS integer)) AS upcoming,
+                count(*) FILTER (WHERE t.due_date IS NULL) AS no_due_date,
+                count(*) FILTER (WHERE t.project_id IS NULL) AS no_project
+                FROM task_ayuza.tasks t
+                CROSS JOIN (SELECT (clock_timestamp() AT TIME ZONE w.timezone)::date AS today
+                            FROM task_ayuza.workspaces w WHERE w.id = :w) d
+                WHERE t.workspace_id=:w AND t.archived_at IS NULL
+                  AND (CAST(:subs AS boolean) OR t.parent_task_id IS NULL)
+                  AND {READABLE_TASKS}''', w=wid, u=u['id'], days=UPCOMING_DAYS, subs=include_subtasks,
+                          everything=everything, member=member is not None).mappings().one()
+            return {**{k: int(v) for k, v in row.items()}, 'include_subtasks': include_subtasks, 'upcoming_days': UPCOMING_DAYS}
         return self.auth.protected(token, run)
 
     # ------------------------------------------------------------------ explicit task access (D02)

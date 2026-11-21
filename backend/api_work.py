@@ -93,6 +93,11 @@ def list_tasks(workspace_id: str, request: Request, status: str | None = None, l
     return work(request).list_tasks(token(request), workspace_id, status=status, limit=limit, after=after)
 
 
+@router.get('/workspaces/{workspace_id}/snapshot')
+def snapshot(workspace_id: str, request: Request, include_subtasks: bool = False):
+    return work(request).snapshot(token(request), workspace_id, include_subtasks=include_subtasks)
+
+
 @router.post('/workspaces/{workspace_id}/tasks')
 def create_task(workspace_id: str, data: TaskCreate, request: Request):
     tok, csrf = credentials(request)

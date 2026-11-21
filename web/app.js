@@ -1,11 +1,11 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { MONTHS, ganttRows, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { snapshotItems, MONTHS, ganttRows, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const state = { user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null, risks: [], release: '', riskLinks: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() };
+  blockers: [], deps: null, risks: [], snap: null, subs: false, release: '', riskLinks: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() };
 const api = new Api((...args) => fetch(...args), () => { state.user = null; state.phase = 'login'; render(); });
 let pendingKey = null;                                  // one client_key per creation attempt, kept until it succeeds
 
@@ -243,6 +243,18 @@ function risksView() {
     state.risks.length ? '' : h('p', { class: 'muted' }, 'Рисков нет.'), state.risks.map(riskCard), form);
 }
 
+async function loadSnapshot() {
+  if (!state.ws) return;
+  try { state.snap = await api.snapshot(state.ws, state.subs); } catch { state.snap = null; }
+}
+
+function snapshotView() {
+  if (!state.snap) return '';
+  return h('div', { class: 'card snap' },
+    snapshotItems(state.snap).map((i) => h('span', { class: `snapitem ${i.key}` }, `${i.text}: `, h('strong', {}, String(i.value)))),
+    h('label', { class: 'muted' }, h('input', { type: 'checkbox', checked: state.subs, on: { change: async (e) => { state.subs = e.target.checked; await loadSnapshot(); render(); } } }), ' включать подзадачи'));
+}
+
 function ganttView() {
   const g = ganttRows(state.tasks);
   return h('div', { class: 'gantt' },
@@ -335,7 +347,7 @@ function mainView() {
   const messages = [h('div', { class: 'error', role: 'alert' }, state.error), h('div', { class: 'ok' }, state.message)];
   if (state.view === 'notes') return [tabs, messages, notesView()];
   if (state.view === 'risks') return [tabs, messages, risksView(), h('p', { class: 'muted' }, state.release)];
-  return [bar, tabs, messages, state.dir ? createView() : '', h('div', { class: 'bar' }, h('button', { on: { click: () => exportTasks('csv') } }, 'Выгрузить CSV'),
+  return [bar, tabs, messages, snapshotView(), state.dir ? createView() : '', h('div', { class: 'bar' }, h('button', { on: { click: () => exportTasks('csv') } }, 'Выгрузить CSV'),
       h('button', { on: { click: () => exportTasks('json') } }, 'Выгрузить JSON')),
     state.view === 'board' ? boardView() : state.view === 'gantt' ? ganttView() : state.view === 'calendar' ? calendarView() : table,
     state.more ? h('button', { on: { click: async () => { await loadTasks(false); } } }, 'Показать ещё') : '',
@@ -361,6 +373,7 @@ async function loadTasks(reset) {
     const page = await api.tasks(state.ws, state.view === 'list' ? state.status : '', after);
     state.tasks = reset ? page : state.tasks.concat(page);
     state.more = page.length === PAGE;
+    if (reset) await loadSnapshot();
   } catch (error) { state.tasks = []; state.more = false; state.error = error.message; }
   render();
 }
