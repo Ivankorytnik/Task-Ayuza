@@ -85,3 +85,25 @@ jobs:
           code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/auth/me)
           echo "GET /api/v1/auth/me without session: $code"
           test "$code" = 401 || test "$code" = 403 || { cat uvicorn.log; exit 1; }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Browser E2E against the real backend (synthetic data, self-signed TLS on localhost)
+        env:
+          TASK_AYUZA_DATABASE_URL: postgresql+psycopg://task_ayuza_runtime:ci-runtime-synthetic@127.0.0.1:5432/task_ayuza_test
+          TASK_AYUZA_ORIGIN: https://localhost:8443
+          TASK_AYUZA_AUTH_HMAC_KEY: 'a0000000000000000000000000000000000000000000000000000000000000b1'
+          TASK_AYUZA_MFA_KEY: 'c0000000000000000000000000000000000000000000000000000000000000d2'
+          TASK_AYUZA_OUTBOX_INTERVAL: '0'
+        run: |
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost'
+          python -m uvicorn backend.main:app --host 127.0.0.1 --port 8443 --ssl-keyfile key.pem --ssl-certfile cert.pem > uvicorn-tls.log 2>&1 &
+          ok=0
+          for i in $(seq 1 20); do
+            if curl -skf https://localhost:8443/openapi.json -o /dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != 1 ]; then echo "TLS backend did not answer"; cat uvicorn-tls.log; exit 1; fi
+          python tests/e2e/seed.py > e2e_user.json
+          google-chrome --version
+          node tests/browser/e2e.mjs https://localhost:8443 e2e_user.json || { echo '--- backend log'; cat uvicorn-tls.log; exit 1; }
