@@ -3,6 +3,10 @@ export const STATUSES = [['new', 'Новая'], ['planned', 'Запланиро�
   ['blocked', 'Блокирована'], ['done', 'Выполнена'], ['cancelled', 'Отменена']];
 export const PRIORITIES = [['low', 'Низкий'], ['normal', 'Обычный'], ['high', 'Высокий'], ['critical', 'Критический']];
 export const PAGE = 50;
+export const TERMINAL = ['done', 'cancelled'];
+export const REOPEN = ['new', 'planned', 'in_progress'];
+export const EVENTS = { task_assigned: 'Вам назначена задача', comment_added: 'Новый комментарий',
+  blocker_resolved: 'Блокер снят', dependency_changed: 'Изменены зависимости' };
 
 export const label = (pairs, key) => (pairs.find((p) => p[0] === key) || [key, key])[1];
 
@@ -58,6 +62,29 @@ export function diffChanges(original, edited) {
   return out;
 }
 
+// Mirrors D04 for the UI only; the server stays the authority. Terminal statuses can only be reopened.
+export function transitionAllowed(from, to) {
+  if (from === to) return true;
+  return TERMINAL.includes(from) ? REOPEN.includes(to) : true;
+}
+
+export function allowedTargets(from) { return STATUSES.map((s) => s[0]).filter((to) => to !== from && transitionAllowed(from, to)); }
+
+export function columns(tasks) {
+  const out = STATUSES.map(([key, text]) => ({ key, text, tasks: [] }));
+  for (const task of tasks) { const col = out.find((c) => c.key === task.status); if (col) col.tasks.push(task); }
+  return out;
+}
+
+export function unread(list) { return list.filter((n) => !n.read_at).length; }
+
+export function blockerPayload(form) {
+  const payload = { title: form.title.trim() };
+  if (form.responsible) payload.responsible_user_id = form.responsible;
+  if (form.due_date) payload.expected_resolution_date = form.due_date;
+  return payload;
+}
+
 export class Api {
   constructor(fetchImpl, onAuthLost = () => {}) {
     this.fetch = fetchImpl;
@@ -107,5 +134,11 @@ export class Api {
     return this.request('PATCH', `/api/v1/tasks/${id}`, { expected_version: version, changes }, true);
   }
   comments(id) { return this.request('GET', `/api/v1/tasks/${id}/comments`); }
+  notifications(unreadOnly) { return this.request('GET', `/api/v1/notifications?limit=100${unreadOnly ? '&unread_only=true' : ''}`); }
+  unreadCount() { return this.request('GET', '/api/v1/notifications/unread-count'); }
+  markRead(id) { return this.request('POST', `/api/v1/notifications/${id}/read`, undefined, true); }
+  blockers(id) { return this.request('GET', `/api/v1/tasks/${id}/blockers`); }
+  createBlocker(id, payload) { return this.request('POST', `/api/v1/tasks/${id}/blockers`, payload, true); }
+  dependencies(id) { return this.request('GET', `/api/v1/tasks/${id}/dependencies`); }
   addComment(id, body) { return this.request('POST', `/api/v1/tasks/${id}/comments`, { body }, true); }
 }
