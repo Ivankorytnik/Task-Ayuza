@@ -46,6 +46,7 @@ READABLE_TASKS = '''(CAST(:everything AS boolean) OR (CAST(:member AS boolean) A
                                       WHERE pr.id=t.project_id AND pr.owner_user_id=:u))))))'''
 
 
+MAX_PERIOD_DAYS = 366
 UPCOMING_DAYS = 7   # the 'nearest due dates' window of the snapshot, in workspace-local days
 PROJECT_FIELDS = frozenset({'title', 'description', 'start_date', 'due_date'})
 
@@ -713,6 +714,33 @@ class WorkService:
                   AND {READABLE_TASKS}''', w=wid, u=u['id'], days=UPCOMING_DAYS, subs=include_subtasks,
                           everything=everything, member=member is not None).mappings().one()
             return {**{k: int(v) for k, v in row.items()}, 'include_subtasks': include_subtasks, 'upcoming_days': UPCOMING_DAYS}
+        return self.auth.protected(token, run)
+
+    def metrics(self, token, workspace_id, date_from, date_to):
+        """F20 'for a period': events of the tasks the caller can read, counted by the workspace-local date, both
+        borders inclusive. Archived tasks stay in: a past period is history. Counts come only from task_events."""
+        wid = as_uuid(workspace_id)
+        start, end = _date(date_from), _date(date_to)
+        if start is None or end is None or start > end or (end - start).days >= MAX_PERIOD_DAYS:
+            raise AclError(422, 'Invalid period')
+
+        def run(c, u, s):
+            member = membership(c, u['id'], wid)
+            everything = _grant_ok(c, s, u['id'], wid, 'read')
+            if member is None and not everything:
+                raise _not_found()
+            counts = {r['event_type']: r['n'] for r in execute(c, f'''SELECT e.event_type, count(*) AS n
+                FROM task_ayuza.task_events e
+                JOIN task_ayuza.tasks t ON t.id = e.task_id
+                JOIN task_ayuza.workspaces w ON w.id = e.workspace_id
+                WHERE e.workspace_id=:w AND e.event_type IN ('created','completed','cancelled','reopened')
+                  AND (e.occurred_at AT TIME ZONE w.timezone)::date BETWEEN :d1 AND :d2
+                  AND {READABLE_TASKS}
+                GROUP BY e.event_type''', w=wid, u=u['id'], d1=start, d2=end, everything=everything,
+                                                       member=member is not None).mappings().all()}
+            return {'from': start.isoformat(), 'to': end.isoformat(), 'created': int(counts.get('created', 0)),
+                    'completed': int(counts.get('completed', 0)), 'cancelled': int(counts.get('cancelled', 0)),
+                    'reopened': int(counts.get('reopened', 0))}
         return self.auth.protected(token, run)
 
     # ------------------------------------------------------------------ explicit task access (D02)
