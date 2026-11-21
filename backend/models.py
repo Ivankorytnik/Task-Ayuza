@@ -82,7 +82,7 @@ class AuditEvent(Base):
 
 
 # Core tables used by the auth service. Explicit metadata, never create_all on startup.
-from sqlalchemy import Table, Column, BigInteger, Boolean, ForeignKeyConstraint, Integer, LargeBinary, Text, UniqueConstraint
+from sqlalchemy import Table, Column, BigInteger, Boolean, ForeignKeyConstraint, Integer, LargeBinary, Text, UniqueConstraint, Date
 
 Users = Table('users', Base.metadata,
     Column('id',UUID(as_uuid=True),primary_key=True),
@@ -270,3 +270,66 @@ SetupState = Table('setup_state',Base.metadata,
     Column('completed_at',DateTime(timezone=True),nullable=False,server_default=text('now()')),
     Column('owner_user_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id'),nullable=False),
     CheckConstraint('singleton IS TRUE',name='ck_setup_singleton'),schema=SCHEMA)
+
+# ---- M02.1 ----
+def _ts(name, **kw):
+    return Column(name, DateTime(timezone=True), nullable=False, server_default=text('now()'), **kw)
+
+Projects = Table('projects',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('workspace_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.workspaces.id'),nullable=False),
+    Column('owner_user_id',UUID(as_uuid=True),nullable=False),
+    Column('title',String(200),nullable=False),
+    Column('description',String(10000),nullable=False,server_default=text("''")),
+    Column('start_date',Date),Column('due_date',Date),
+    Column('version',BigInteger,nullable=False,server_default=text('1')),
+    Column('archived_at',DateTime(timezone=True)),
+    _ts('created_at'),_ts('updated_at'),
+    UniqueConstraint('workspace_id','id',name='uq_projects_workspace_id'),
+    ForeignKeyConstraint(['workspace_id','owner_user_id'],[f'{SCHEMA}.workspace_members.workspace_id',f'{SCHEMA}.workspace_members.user_id'],name='fk_projects_owner_member'),
+    CheckConstraint('version >= 1',name='ck_projects_version'),
+    Index('ix_projects_workspace','workspace_id','id'),schema=SCHEMA)
+ProjectMembers = Table('project_members',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('project_id',UUID(as_uuid=True),nullable=False),
+    Column('workspace_id',UUID(as_uuid=True),nullable=False),
+    Column('user_id',UUID(as_uuid=True),nullable=False),
+    Column('role',String(20),nullable=False),
+    Column('active',Boolean,nullable=False,server_default=text('true')),
+    Column('version',BigInteger,nullable=False,server_default=text('1')),
+    _ts('created_at'),_ts('updated_at'),
+    UniqueConstraint('project_id','user_id',name='uq_project_members_pair'),
+    ForeignKeyConstraint(['workspace_id','project_id'],[f'{SCHEMA}.projects.workspace_id',f'{SCHEMA}.projects.id'],name='fk_pm_project'),
+    ForeignKeyConstraint(['workspace_id','user_id'],[f'{SCHEMA}.workspace_members.workspace_id',f'{SCHEMA}.workspace_members.user_id'],name='fk_pm_workspace_member'),
+    CheckConstraint('version >= 1',name='ck_pm_version'),
+    Index('ix_pm_user','user_id','project_id'),schema=SCHEMA)
+Tasks = Table('tasks',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('workspace_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.workspaces.id'),nullable=False),
+    Column('project_id',UUID(as_uuid=True)),
+    Column('title',String(300),nullable=False),
+    Column('description',String(20000),nullable=False,server_default=text("''")),
+    Column('status',String(12),nullable=False,server_default=text("'new'")),
+    Column('priority',String(10),nullable=False,server_default=text("'normal'")),
+    Column('created_by_user_id',UUID(as_uuid=True),nullable=False),
+    Column('result_owner_user_id',UUID(as_uuid=True),nullable=False),
+    Column('executor_team_id',UUID(as_uuid=True),nullable=False),
+    Column('assignee_user_id',UUID(as_uuid=True)),
+    Column('start_date',Date),Column('due_date',Date),
+    Column('closed_at',DateTime(timezone=True)),
+    Column('version',BigInteger,nullable=False,server_default=text('1')),
+    Column('archived_at',DateTime(timezone=True)),
+    _ts('created_at'),_ts('updated_at'),
+    UniqueConstraint('workspace_id','id',name='uq_tasks_workspace_id'),
+    ForeignKeyConstraint(['workspace_id','project_id'],[f'{SCHEMA}.projects.workspace_id',f'{SCHEMA}.projects.id'],name='fk_tasks_project'),
+    ForeignKeyConstraint(['workspace_id','executor_team_id'],[f'{SCHEMA}.workspace_teams.workspace_id',f'{SCHEMA}.workspace_teams.team_id'],name='fk_tasks_team'),
+    ForeignKeyConstraint(['workspace_id','created_by_user_id'],[f'{SCHEMA}.workspace_members.workspace_id',f'{SCHEMA}.workspace_members.user_id'],name='fk_tasks_author'),
+    ForeignKeyConstraint(['workspace_id','result_owner_user_id'],[f'{SCHEMA}.workspace_members.workspace_id',f'{SCHEMA}.workspace_members.user_id'],name='fk_tasks_owner'),
+    ForeignKeyConstraint(['workspace_id','assignee_user_id'],[f'{SCHEMA}.workspace_members.workspace_id',f'{SCHEMA}.workspace_members.user_id'],name='fk_tasks_assignee'),
+    CheckConstraint('version >= 1',name='ck_tasks_version'),
+    Index('ix_tasks_status','workspace_id','status','id'),
+    Index('ix_tasks_due','workspace_id','due_date','id'),
+    Index('ix_tasks_team','workspace_id','executor_team_id','id'),
+    Index('ix_tasks_assignee','workspace_id','assignee_user_id','id'),
+    Index('ix_tasks_owner','workspace_id','result_owner_user_id','id'),
+    Index('ix_tasks_project','workspace_id','project_id','id'),schema=SCHEMA)

@@ -35,3 +35,7 @@ GRANT INSERT, UPDATE ON task_ayuza.system_role_assignments TO task_ayuza_runtime
 GRANT SELECT ON task_ayuza.setup_state TO task_ayuza_runtime;
 GRANT SELECT ON task_ayuza.user_mfa, task_ayuza.mfa_backup_codes, task_ayuza.administrative_grants,
     task_ayuza.setup_state TO task_ayuza_backup;
+
+-- M02.1 work tables. Runtime has no DDL/DELETE/TRUNCATE: objects end by archived_at/active flags.
+GRANT SELECT, INSERT, UPDATE ON task_ayuza.projects, task_ayuza.project_members, task_ayuza.tasks TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.projects, task_ayuza.project_members, task_ayuza.tasks TO task_ayuza_backup;

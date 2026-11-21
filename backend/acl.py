@@ -30,7 +30,10 @@ GRANT_CAPABILITIES = CAPABILITIES | {'audit_read'}
 DELEGABLE = frozenset({'read', 'comment', 'content_edit', 'link'})
 WORKSPACE_ROLES = frozenset({'participant', 'observer', 'workspace_admin'})
 SNAPSHOT_FIELDS = frozenset({'name', 'role', 'active', 'capability', 'timezone', 'revoked',
-                             'kind', 'expires_at', 'role_code'})
+                             'kind', 'expires_at', 'role_code',
+                             # M02.1 work objects: identifiers and enums only, never titles or text
+                             'status', 'priority', 'archived', 'project_id', 'owner_user_id',
+                             'result_owner_user_id', 'executor_team_id', 'assignee_user_id', 'fields'})
 
 
 class AclError(Exception):
@@ -80,7 +83,7 @@ def _snapshot(values):
         return None
     if not isinstance(values, dict) or not values or set(values) - SNAPSHOT_FIELDS:
         raise ValueError('Disallowed audit snapshot fields')
-    return json.dumps(values, ensure_ascii=False, sort_keys=True)
+    return json.dumps(values, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def audit(c, u, s, *, request_id, entity_kind, entity_id, action, workspace_id=None, old=None, new=None):
