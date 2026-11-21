@@ -66,14 +66,14 @@ def test_h03_access_is_checked_again_when_reading(service, acl, notes, w, migrat
     assert notes.list_notifications(h.token) == [] and notes.count_unread(h.token) == 0
     nid = rows(migrator, "SELECT id FROM task_ayuza.notifications WHERE recipient_user_id=:u", u=h.id)[0]['id']
     assert status(lambda: notes.mark_read(h.token, h.csrf, nid)) == 404
-    notes.set_task_access(a.token, a.csrf, t, h.id, 'read', True, 'help')
+    grant = notes.set_task_access(a.token, a.csrf, t, h.id, 'read', True, 'help')
     seen = notes.list_notifications(h.token)
     assert [(n['event_type'], n['task_id']) for n in seen] == [('blocker_resolved', t)]
     assert status(lambda: notes.mark_read(stranger.token, stranger.csrf, nid)) == 404       # not the recipient
     assert notes.mark_read(h.token, h.csrf, nid)['changed'] is True
     assert notes.mark_read(h.token, h.csrf, nid)['changed'] is False
     assert notes.count_unread(h.token) == 0 and types(notes, h, unread_only=True) == []
-    notes.set_task_access(a.token, a.csrf, t, h.id, 'read', False, 'done')
+    notes.set_task_access(a.token, a.csrf, t, h.id, 'read', False, 'done', expected_version=grant['version'])
     assert notes.list_notifications(h.token) == []                                          # access withdrawn again
 
 
