@@ -42,7 +42,7 @@ def test_g01_dependency_rules_and_cycles(service, acl, links, w, migrator):
     # statuses are never changed by a dependency; active means the blocker is not done
     listed = links.list_dependencies(a.token, B)
     assert listed['has_active_dependencies'] is True and listed['hidden_external'] == 0
-    assert [(e['direction'], e['task_id']) for e in listed['edges']] == [('blocked_by', A), ('blocks', C)]
+    assert sorted((e['direction'], str(e['task_id'])) for e in listed['edges']) == sorted([('blocked_by', str(A)), ('blocks', str(C))])
     done = links.update_task(a.token, a.csrf, A, 1, {'status': 'done'})
     assert links.list_dependencies(a.token, B)['has_active_dependencies'] is False
     assert links.get_task(a.token, B)['status'] == 'new'
@@ -162,7 +162,9 @@ def test_g05_blockers(service, acl, links, w, migrator):
     dump = repr(rows(migrator, 'SELECT "old","new" FROM task_ayuza.audit_events'))
     assert 'secret reason' not in dump and 'Waiting for parts' not in dump and 'Parts delayed' not in dump
     # blocking task the creator cannot read is rejected as not found
-    hidden = new_task(links, reader, w)['id']
+    w3 = world(service, acl, migrator)
+    outsider = join(acl, w3, person(service))
+    hidden = new_task(links, outsider, w3)['id']
     assert status(lambda: links.create_blocker(a.token, a.csrf, T, 'Hidden link', responsible_team_id=w.team, blocking_task_id=hidden)) == 404
 
 
