@@ -66,7 +66,7 @@ def test_e01_status_events_and_attribution(service, acl, items, w, migrator):
 
 def test_e02_history_redacts_project_for_task_only_readers(service, acl, items, w, migrator):
     pm = join(acl, w, person(service))
-    only_task = join(acl, w, person(service), team=False)
+    only_task = join(acl, w, person(service))
     pid = new_project(items, pm, w)['id']
     t = new_task(items, pm, w, project_id=pid)['id']
     items.assign_task(pm.token, pm.csrf, t, 1, assignee_user_id=only_task.id)
