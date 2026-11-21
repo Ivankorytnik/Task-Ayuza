@@ -180,7 +180,7 @@ def test_b06_grant_lifecycle_expiry_and_mfa(service, mfa, grants, acl, migrator)
     admin_sql(migrator, 'UPDATE task_ayuza.sessions SET mfa_verified_at = clock_timestamp() WHERE user_id=:u', u=grantee.id)
     assert acl.run_protected(grantee.token, ws, 'read', lambda c, u, s: 'ok') == 'ok'
     # expiry: the database clock decides
-    admin_sql(migrator, "UPDATE task_ayuza.administrative_grants SET valid_from = valid_from - interval '3 hours', expires_at = clock_timestamp() - interval '1 minute' WHERE id=:id", id=issued['id'])
+    admin_sql(migrator, "UPDATE task_ayuza.administrative_grants SET valid_from = valid_from - interval '90 minutes', expires_at = clock_timestamp() - interval '1 minute' WHERE id=:id", id=issued['id'])
     assert status(lambda: acl.run_protected(grantee.token, ws, 'read', lambda c, u, s: 'ok')) == 404
     # a new approval is a new grant; revocation takes effect at once and is idempotent
     second = grants.issue_grant(a2.token, a2.csrf, ws, grantee.id, 'read', 'standard', 24 * 60, 'renewed need')
