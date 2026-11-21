@@ -39,3 +39,10 @@ GRANT SELECT ON task_ayuza.user_mfa, task_ayuza.mfa_backup_codes, task_ayuza.adm
 -- M02.1 work tables. Runtime has no DDL/DELETE/TRUNCATE: objects end by archived_at/active flags.
 GRANT SELECT, INSERT, UPDATE ON task_ayuza.projects, task_ayuza.project_members, task_ayuza.tasks TO task_ayuza_runtime;
 GRANT SELECT ON task_ayuza.projects, task_ayuza.project_members, task_ayuza.tasks TO task_ayuza_backup;
+
+-- M02.2. Runtime has no DDL/DELETE/TRUNCATE; comment_revisions is append-only (no UPDATE).
+GRANT SELECT, INSERT, UPDATE ON task_ayuza.labels, task_ayuza.project_stages, task_ayuza.project_labels,
+    task_ayuza.task_labels, task_ayuza.checklist_items, task_ayuza.comments TO task_ayuza_runtime;
+GRANT SELECT, INSERT ON task_ayuza.comment_revisions TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.labels, task_ayuza.project_stages, task_ayuza.project_labels,
+    task_ayuza.task_labels, task_ayuza.checklist_items, task_ayuza.comments, task_ayuza.comment_revisions TO task_ayuza_backup;

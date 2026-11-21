@@ -138,7 +138,7 @@ class WorkService:
         raise _forbidden() if role is not None else _not_found()
 
     def _task_access(self, c, u, s, task, op):
-        """op: read | edit | assign | archive. Returns (project, member_role, project_role)."""
+        """op: read | comment | edit | assign | archive. Returns (project, member_role, project_role)."""
         wid, uid = task['workspace_id'], u['id']
         project = None
         if task['project_id'] is not None:
@@ -152,11 +152,14 @@ class WorkService:
         if op == 'read':
             ok = readable
         elif member is not None and member['role'] != 'observer' and prole != 'observer':
-            if op == 'edit':
+            if op == 'comment':
+                ok = readable
+            elif op == 'edit':
                 ok = personal or prole in ('participant', 'project_manager')
             else:
                 ok = uid == task['result_owner_user_id'] or prole == 'project_manager'
-        cap = {'read': 'read', 'edit': 'content_edit', 'assign': 'assign', 'archive': 'archive_restore'}[op]
+        cap = {'read': 'read', 'comment': 'comment', 'edit': 'content_edit', 'assign': 'assign',
+               'archive': 'archive_restore'}[op]
         if not ok and _grant_ok(c, s, uid, wid, cap):
             ok = True
         if ok:
@@ -329,10 +332,11 @@ class WorkService:
 
     def create_task(self, token, csrf, workspace_id, title, result_owner_user_id, executor_team_id,
                     project_id=None, description='', priority='normal', assignee_user_id=None,
-                    start_date=None, due_date=None, request_id=None):
+                    start_date=None, due_date=None, parent_task_id=None, request_id=None):
         wid, owner, team = as_uuid(workspace_id), as_uuid(result_owner_user_id), as_uuid(executor_team_id)
         pid = as_uuid(project_id) if project_id is not None else None
         assignee = as_uuid(assignee_user_id) if assignee_user_id is not None else None
+        parent_id = as_uuid(parent_task_id) if parent_task_id is not None else None
         title, description = clean_text(title, 300), _text(description, 20000, required=False)
         if priority not in PRIORITIES:
             raise AclError(422, 'Invalid priority')
@@ -360,19 +364,32 @@ class WorkService:
             # naming someone else as result owner is assignment (D02); the owner may pick team and assignee
             if owner != uid and prole != 'project_manager' and not _grant_ok(c, s, uid, wid, 'assign'):
                 raise _forbidden()
+            if parent_id is not None:
+                parent = one(c, 'SELECT * FROM task_ayuza.tasks WHERE id=:p AND workspace_id=:w FOR SHARE', p=parent_id, w=wid)
+                if parent is None:
+                    raise _not_found()
+                self._task_access(c, u, s, parent, 'edit')
+                if parent['archived_at'] is not None:
+                    raise AclError(409, 'Parent task is archived')
+                if parent['parent_task_id'] is not None:
+                    raise AclError(422, 'Only one level of subtasks is supported')
+                if parent['project_id'] != pid:
+                    raise AclError(422, 'Subtask must belong to the parent project')
             _check_people(c, wid, owner, team, assignee)
             tid = uuid.uuid4()
             author = uid
             execute(c, '''INSERT INTO task_ayuza.tasks (id, workspace_id, project_id, title, description, priority,
-                    created_by_user_id, result_owner_user_id, executor_team_id, assignee_user_id, start_date, due_date)
-                VALUES (:id, :w, :p, :t, :d, :pr, :a, :o, :team, :asg, :s, :due)''',
+                    created_by_user_id, result_owner_user_id, executor_team_id, assignee_user_id, start_date, due_date,
+                    parent_task_id)
+                VALUES (:id, :w, :p, :t, :d, :pr, :a, :o, :team, :asg, :s, :due, :parent)''',
                     id=tid, w=wid, p=pid, t=title, d=description, pr=priority, a=author, o=owner, team=team,
-                    asg=assignee, s=start, due=due)
+                    asg=assignee, s=start, due=due, parent=parent_id)
             audit(c, u, s, request_id=request_id, entity_kind='task', entity_id=tid, action='task.created',
                   workspace_id=wid, old=None,
                   new={'status': 'new', 'priority': priority, 'project_id': str(pid) if pid else None,
                        'result_owner_user_id': str(owner), 'executor_team_id': str(team),
-                       'assignee_user_id': str(assignee) if assignee else None})
+                       'assignee_user_id': str(assignee) if assignee else None,
+                       'parent_task_id': str(parent_id) if parent_id else None})
             return {'id': tid, 'version': 1}
         return self.auth.protected(token, run, csrf=csrf, mutation=True)
 
