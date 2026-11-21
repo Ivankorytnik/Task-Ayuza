@@ -12,7 +12,7 @@ class SchemaVersionError(RuntimeError):
     pass
 
 
-REQUIRED_REVISION = "0005_m02_projects_tasks"
+REQUIRED_REVISION = "0006_m02_items"
 
 
 def make_engine(url: str | None = None) -> Engine:
