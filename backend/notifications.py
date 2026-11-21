@@ -12,11 +12,34 @@ import uuid
 from backend.acl import AclError, _not_found, as_uuid
 from backend.auth import execute, one
 from backend.links import LinksService
+from backend.outbox import enqueue, people
 
 MAX_ATTEMPTS = 5
 
 
 class NotificationsService(LinksService):
+    def enqueue_due_reminders(self, soon_days=1, limit=1000):
+        """System operation (no user session, no audit, no task changes): reminders about due dates. 'Today' is the
+        date in the workspace time zone. Open tasks only. One reminder per task, type, due date and recipient:
+        repeating a pass adds nothing, moving the due date earns a new reminder."""
+        if isinstance(soon_days, bool) or not isinstance(soon_days, int) or not 0 <= soon_days <= 7:
+            raise AclError(422, 'Invalid window')
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 5000:
+            raise AclError(422, 'Invalid limit')
+
+        def run(c):
+            queued = 0
+            for row in execute(c, '''SELECT t.id, t.workspace_id, t.result_owner_user_id, t.assignee_user_id, t.due_date,
+                    (t.due_date < (clock_timestamp() AT TIME ZONE w.timezone)::date) AS overdue
+                FROM task_ayuza.tasks t JOIN task_ayuza.workspaces w ON w.id = t.workspace_id
+                WHERE t.archived_at IS NULL AND t.status NOT IN ('done', 'cancelled') AND t.due_date IS NOT NULL
+                  AND t.due_date <= (clock_timestamp() AT TIME ZONE w.timezone)::date + CAST(:days AS integer)
+                ORDER BY t.id LIMIT :n''', days=soon_days, n=limit).mappings().all():
+                queued += enqueue(c, actor_id=None, task=row, event_type='task_overdue' if row['overdue'] else 'task_due_soon',
+                                  source_id=row['id'], source_key=row['due_date'].isoformat(), recipients=people(row))
+            return {'queued': queued}
+        return self.auth.transaction(run)
+
     def process_outbox(self, limit=100):
         """System operation without a user session. Safe to run concurrently (SKIP LOCKED) and to repeat."""
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:

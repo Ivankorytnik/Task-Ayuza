@@ -6,7 +6,8 @@ export const PAGE = 50;
 export const TERMINAL = ['done', 'cancelled'];
 export const REOPEN = ['new', 'planned', 'in_progress'];
 export const EVENTS = { task_assigned: 'Вам назначена задача', comment_added: 'Новый комментарий',
-  blocker_resolved: 'Блокер снят', dependency_changed: 'Изменены зависимости' };
+  blocker_resolved: 'Блокер снят', dependency_changed: 'Изменены зависимости',
+  task_due_soon: 'Срок задачи близко', task_overdue: 'Задача просрочена' };
 
 export const label = (pairs, key) => (pairs.find((p) => p[0] === key) || [key, key])[1];
 
