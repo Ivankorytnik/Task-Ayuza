@@ -109,7 +109,8 @@ def test_a02_schema_check_is_read_only(runtime_engine):
         "organization", "audit_events", "alembic_version", "users", "sessions", "login_attempts",
         "prelogin_limits", "auth_limit_events", "workspaces", "teams", "workspace_members",
         "team_members", "workspace_teams", "workspace_team_access", "system_role_assignments",
-        "user_mfa", "mfa_backup_codes", "administrative_grants", "setup_state"
+        "user_mfa", "mfa_backup_codes", "administrative_grants", "setup_state",
+        "projects", "project_members", "tasks"
     }
     with runtime_engine.connect() as connection:
         before = [connection.execute(text(f"SELECT count(*) FROM task_ayuza.{table}")).scalar_one()
@@ -250,8 +251,8 @@ def test_a09_backup_read_only(runtime_engine):
 def test_a10_static_metadata():
     assert sorted(table.name for table in Base.metadata.tables.values()) == [
         "administrative_grants", "audit_events", "auth_limit_events", "login_attempts",
-        "mfa_backup_codes", "organization", "prelogin_limits", "sessions", "setup_state",
-        "system_role_assignments", "team_members", "teams", "user_mfa", "users",
+        "mfa_backup_codes", "organization", "prelogin_limits", "project_members", "projects", "sessions", "setup_state",
+        "system_role_assignments", "tasks", "team_members", "teams", "user_mfa", "users",
         "workspace_members", "workspace_team_access", "workspace_teams", "workspaces"
     ]
     assert all(table.schema == "task_ayuza" for table in Base.metadata.tables.values())
