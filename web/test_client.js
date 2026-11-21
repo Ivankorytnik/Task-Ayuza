@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -224,6 +224,14 @@ await test('every notification type has a label', () => {
   for (const type of ['task_assigned', 'comment_added', 'blocker_resolved', 'dependency_changed', 'task_due_soon', 'task_overdue']) {
     assert.ok(EVENTS[type], type);
   }
+});
+
+await test('snapshot items keep order, skip unknown keys, request carries the toggle', async () => {
+  const items = snapshotItems({ total: 5, overdue: 2, weird: 9, no_project: 0, upcoming: 'x' });
+  assert.deepEqual(items.map((i) => [i.key, i.value]), [['total', 5], ['overdue', 2], ['no_project', 0]]);
+  const f = fakeFetch([]); const api = new Api(f);
+  await api.snapshot('w1', true); await api.snapshot('w1', false);
+  assert.deepEqual(f.calls.map((c) => c.path), ['/api/v1/workspaces/w1/snapshot?include_subtasks=true', '/api/v1/workspaces/w1/snapshot?include_subtasks=false']);
 });
 
 console.log(`${passed} passed`);
