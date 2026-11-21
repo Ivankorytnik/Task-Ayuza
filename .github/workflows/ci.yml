@@ -80,6 +80,6 @@ jobs:
           done
           if [ "$ok" != 1 ]; then echo "backend did not answer"; cat uvicorn.log; exit 1; fi
           python -c "import json; print(sorted(json.load(open('openapi.json'))['paths']))"
-          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/me)
-          echo "GET /me without session: $code"
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/auth/me)
+          echo "GET /api/v1/auth/me without session: $code"
           test "$code" = 401 || test "$code" = 403 || { cat uvicorn.log; exit 1; }
