@@ -46,3 +46,8 @@ GRANT SELECT, INSERT, UPDATE ON task_ayuza.labels, task_ayuza.project_stages, ta
 GRANT SELECT, INSERT ON task_ayuza.comment_revisions TO task_ayuza_runtime;
 GRANT SELECT ON task_ayuza.labels, task_ayuza.project_stages, task_ayuza.project_labels,
     task_ayuza.task_labels, task_ayuza.checklist_items, task_ayuza.comments, task_ayuza.comment_revisions TO task_ayuza_backup;
+
+-- M02.3. task_events is append-only for runtime (no UPDATE/DELETE); idempotency keys may be re-used after expiry.
+GRANT SELECT, INSERT ON task_ayuza.task_events TO task_ayuza_runtime;
+GRANT SELECT, INSERT, UPDATE ON task_ayuza.idempotency_requests, task_ayuza.task_access_grants TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.task_events, task_ayuza.idempotency_requests, task_ayuza.task_access_grants TO task_ayuza_backup;

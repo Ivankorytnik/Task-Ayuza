@@ -87,7 +87,7 @@ def main():
                     return subprocess.run([sys.executable, '-m', 'alembic', *params],
                         env=migration_env, check=True, capture_output=True, text=True)
                 heads = alembic('heads').stdout.strip()
-                assert heads == '0006_m02_items (head)'
+                assert heads == '0007_m02_events (head)'
                 alembic('upgrade', 'head')
                 engine = create_engine(urls['migrator'], hide_parameters=True)
                 def snapshot():
@@ -103,14 +103,14 @@ def main():
                 alembic('upgrade', 'head')
                 assert before == repr(snapshot())
                 tables_now, counts_now = snapshot()[:2]
-                assert tables_now == ['administrative_grants', 'alembic_version', 'audit_events', 'auth_limit_events', 'checklist_items', 'comment_revisions', 'comments', 'labels', 'login_attempts', 'mfa_backup_codes', 'organization', 'prelogin_limits', 'project_labels', 'project_members', 'project_stages', 'projects', 'sessions', 'setup_state', 'system_role_assignments', 'task_labels', 'tasks', 'team_members', 'teams', 'user_mfa', 'users', 'workspace_members', 'workspace_team_access', 'workspace_teams', 'workspaces']
+                assert tables_now == ['administrative_grants', 'alembic_version', 'audit_events', 'auth_limit_events', 'checklist_items', 'comment_revisions', 'comments', 'idempotency_requests', 'labels', 'login_attempts', 'mfa_backup_codes', 'organization', 'prelogin_limits', 'project_labels', 'project_members', 'project_stages', 'projects', 'sessions', 'setup_state', 'system_role_assignments', 'task_access_grants', 'task_events', 'task_labels', 'tasks', 'team_members', 'teams', 'user_mfa', 'users', 'workspace_members', 'workspace_team_access', 'workspace_teams', 'workspaces']
                 assert counts_now == [1 if t == 'alembic_version' else 0 for t in tables_now]
                 with engine.connect() as c:
-                    assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0006_m02_items'
+                    assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0007_m02_events'
                     drift = compare_metadata(MigrationContext.configure(c, opts={'include_schemas': True, 'version_table_schema': 'task_ayuza'}), Base.metadata)
                     assert drift == [], repr(drift)[:3000]
                 conn.execute(Path('scripts/grant-test.sql').read_text())
-                print('A01 PASS: one head (0006); empty tables; repeated upgrade unchanged; metadata matches', flush=True)
+                print('A01 PASS: one head (0007); empty tables; repeated upgrade unchanged; metadata matches', flush=True)
 
                 async def startup(url):
                     os.environ['TASK_AYUZA_DATABASE_URL'] = url
@@ -174,7 +174,7 @@ def main():
                 runtime.dispose()
                 test_env = dict(env, TASK_AYUZA_DATABASE_URL=urls['runtime'],
                     TASK_AYUZA_TEST_RUNTIME_URL=urls['runtime'], TASK_AYUZA_TEST_BACKUP_URL=urls['backup'], TASK_AYUZA_TEST_MIGRATOR_URL=urls['migrator'], TASK_AYUZA_ORIGIN='https://test.local', TASK_AYUZA_AUTH_HMAC_KEY=secrets.token_hex(32), TASK_AYUZA_MFA_KEY=secrets.token_hex(32))
-                subprocess.run([sys.executable, '-m', 'pytest', '-q', '-s', 'tests/test_m01_foundation.py', 'tests/test_m01_auth.py', 'tests/test_m01_acl.py', 'tests/test_m01_mfa_grants.py', 'tests/test_m02_work.py', 'tests/test_m02_items.py', '--tb=short'], env=test_env, check=True)
+                subprocess.run([sys.executable, '-m', 'pytest', '-q', '-s', 'tests/test_m01_foundation.py', 'tests/test_m01_auth.py', 'tests/test_m01_acl.py', 'tests/test_m01_mfa_grants.py', 'tests/test_m02_work.py', 'tests/test_m02_items.py', 'tests/test_m02_events.py', '--tb=short'], env=test_env, check=True)
                 engine.dispose()
                 print('A04-A09 PASS: effective ACL and integration suite; no skipped tests', flush=True)
         finally:

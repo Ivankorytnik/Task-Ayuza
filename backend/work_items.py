@@ -16,7 +16,7 @@ import uuid
 from backend.acl import (AclError, _forbidden, _not_found, as_uuid, audit, check_version, clean_text,
                          grant_capability, membership)
 from backend.auth import execute, one
-from backend.work import UNSET, WorkService, _date, _check_dates, _grant_ok
+from backend.work import UNSET, WorkService, _check_dates, _date, _event, _grant_ok
 
 STAGE_FIELDS = frozenset({'title', 'start_date', 'due_date', 'sort_order'})
 
@@ -259,6 +259,7 @@ class ItemsService(WorkService):
                 WHERE id=:id AND version=:v RETURNING version''', s=sid, id=tid, v=expected)
             if row is None:
                 raise AclError(409, 'Version conflict')
+            _event(c, u, tid, 'stage_changed')
             audit(c, u, s, request_id=request_id, entity_kind='task', entity_id=tid, action='task.stage_set',
                   workspace_id=task['workspace_id'],
                   old={'stage_id': str(task['stage_id']) if task['stage_id'] else None},
