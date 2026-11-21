@@ -68,3 +68,9 @@ def test_n04_risk_and_export_views():
     assert 'risksView' in app and 'exportTasks' in app and 'riskCard' in app
     assert '/api/v1/risks' in logic and '/exports' in logic and '/api/v1/release' in logic
     assert 'Blob' in app and 'createObjectURL' in app                        # the export is saved locally, never kept in storage
+
+
+def test_n05_nested_children_are_flattened_fully():
+    app = (WEB_DIR / 'app.js').read_text(encoding='utf-8')
+    assert 'children.flat(Infinity)' in app          # found in a real browser: nested arrays rendered as [object HTMLDivElement]
+    assert '[object' not in app

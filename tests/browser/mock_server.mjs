@@ -1,0 +1,26 @@
+import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
+const WEB=new URL('../../web/', import.meta.url).pathname;
+const csp="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+const J=(res,o)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(o));};
+const task=(i,st)=>({id:'t'+i,title:'Задача '+i,status:st,priority:'normal',version:1,due_date:null,description:''});
+http.createServer((req,res)=>{
+  const u=req.url.split('?')[0];
+  if(u.startsWith('/app/')||u==='/app'){const f=path.join(WEB,u==='/app/'||u==='/app'?'index.html':u.slice(5));
+    const t={'.js':'text/javascript','.html':'text/html','.css':'text/css'}[path.extname(f)]||'application/octet-stream';
+    res.writeHead(200,{'Content-Type':t,'Content-Security-Policy':csp});return res.end(fs.readFileSync(f));}
+  if(u==='/api/v1/auth/prelogin')return J(res,{csrf_token:'x'});
+  if(u==='/api/v1/auth/me')return J(res,{id:'u1',display_name:'Иван',must_change_password:false});
+  if(u==='/api/v1/workspaces')return J(res,[{id:'w1',name:'Тест'}]);
+  if(u.endsWith('/directory'))return J(res,{role:'member',teams:[],members:[{user_id:'u1',display_name:'Иван',role:'member'}],my_team_ids:[]});
+  if(u==='/api/v1/workspaces/w1/tasks')return J(res,[task(1,'new'),task(2,'done'),task(3,'blocked')]);
+  if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/comments'))return J(res,[]);
+  if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/blockers'))return J(res,[{id:'b1',title:'Ждём договор',status:'active',expected_resolution_date:'2026-12-20'}]);
+  if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/dependencies'))return J(res,{edges:[{id:'e1',direction:'blocked_by',title:'Задача 2',status:'done'}],hidden_external:1});
+  if(u.startsWith('/api/v1/tasks/t'))return J(res,{...task(1,'new'),team_id:'x',owner_user_id:'u1'});
+  if(u==='/api/v1/notifications')return J(res,[{id:'n1',task_id:'t1',event_type:'task_assigned',created_at:'2026-11-21',read_at:null}]);
+  if(u==='/api/v1/risks')return J(res,[{id:'r1',category:'backup',description:'Нет копии',probability:4,impact:5,control_status:'gray'}]);
+  if(u==='/api/v1/tasks')return J(res,{items:[task(1,'new'),task(2,'done')],next:null});
+  if(u==='/api/v1/release')return J(res,{label:'Версия не определена'});
+  if(u.startsWith('/api/v1/notifications/unread'))return J(res,{count:2});
+  res.writeHead(404);res.end('{}');
+}).listen(8765);

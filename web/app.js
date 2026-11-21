@@ -15,7 +15,7 @@ function h(tag, attrs = {}, ...children) {
     if (name === 'on') for (const [evt, fn] of Object.entries(value)) node.addEventListener(evt, fn);
     else if (value !== false && value != null) node.setAttribute(name, value === true ? '' : String(value));
   }
-  for (const child of children.flat()) node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  for (const child of children.flat(Infinity)) node.append(child instanceof Node ? child : document.createTextNode(String(child)));
   return node;
 }
 

@@ -1,0 +1,25 @@
+// Browser smoke: node tests/browser/mock_server.mjs & node tests/browser/smoke.mjs. Needs google-chrome; synthetic data only; not part of CI.
+import { spawn } from 'node:child_process';
+const ch = spawn('google-chrome', ['--headless=new','--no-sandbox','--disable-gpu','--remote-debugging-port=9333','about:blank'],{stdio:'ignore'});
+await new Promise(r=>setTimeout(r,2500));
+const list = await (await fetch('http://localhost:9333/json')).json();
+const ws = new WebSocket(list.find(t=>t.type==='page').webSocketDebuggerUrl);
+await new Promise(r=>ws.onopen=r);
+let id=0; const pend=new Map(); const logs=[];
+ws.onmessage=(m)=>{const d=JSON.parse(m.data); if(d.id&&pend.has(d.id)){pend.get(d.id)(d);pend.delete(d.id);} if(d.method==='Runtime.exceptionThrown'||(d.method==='Runtime.consoleAPICalled'&&d.params.type==='error')||d.method==='Log.entryAdded') logs.push(JSON.stringify(d.params).slice(0,300));};
+const send=(method,params={})=>new Promise(r=>{const i=++id;pend.set(i,r);ws.send(JSON.stringify({id:i,method,params}));});
+const ev=async(e)=>(await send('Runtime.evaluate',{expression:e,awaitPromise:true,returnByValue:true})).result.result.value;
+await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
+await send('Page.navigate',{url:'http://localhost:8765/app/'});
+const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+const click=(t)=>ev(`[...document.querySelectorAll('button')].find(b=>b.textContent.startsWith(${JSON.stringify(t)})).click()`);
+const text=()=>ev(`document.querySelector('main').innerText.replace(/\\n+/g,' | ').slice(0,420)`);
+await wait(1500); console.log('LIST:', await text());
+await click('Kanban'); await wait(800); console.log('BOARD:', await text());
+console.log('COLS:', await ev(`document.querySelectorAll('.col').length+' cols, selects '+document.querySelectorAll('.tcard select').length`));
+console.log('DONE opts:', await ev(`[...document.querySelectorAll('.col[data-status=done] .tcard select option')].map(o=>o.textContent).join(',')`));
+await ev(`document.querySelector('.ttitle').click()`); await wait(800); console.log('DETAIL:', (await text()).slice(-300));
+await click('Риски'); await wait(800); console.log('RISKS:', await text());
+await click('Уведомления'); await wait(800); await ev("[...document.querySelectorAll('button')].find(b=>b.textContent.startsWith('Список')).click()"); await wait(600); await ev("document.querySelector('tbody tr, .tcard .ttitle, td a, td button')?.click()"); await wait(800); console.log('NOTES:', await text());
+console.log('ERRORS:', logs.length? logs.join('\n'):'none');
+console.log('BLOCKERS:', await ev(`document.querySelector('main').innerText.includes('Ждём договор')+' deps '+document.querySelector('main').innerText.includes('Зависит от')`)); ch.kill(); process.exit(0);
