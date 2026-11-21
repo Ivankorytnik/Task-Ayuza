@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -232,6 +232,32 @@ await test('snapshot items keep order, skip unknown keys, request carries the to
   const f = fakeFetch([]); const api = new Api(f);
   await api.snapshot('w1', true); await api.snapshot('w1', false);
   assert.deepEqual(f.calls.map((c) => c.path), ['/api/v1/workspaces/w1/snapshot?include_subtasks=true', '/api/v1/workspaces/w1/snapshot?include_subtasks=false']);
+});
+
+await test('gantt: overdue, range, ticks per scale, today marker, groups, widths', () => {
+  assert.equal(isOverdue({ status: 'new', due_date: '2026-11-20' }, '2026-11-21'), true);
+  assert.equal(isOverdue({ status: 'new', due_date: '2026-11-21' }, '2026-11-21'), false);
+  assert.equal(isOverdue({ status: 'done', due_date: '2026-11-01' }, '2026-11-21'), false);
+  assert.equal(isOverdue({ status: 'cancelled', due_date: '2026-11-01' }, '2026-11-21'), false);
+  assert.equal(isOverdue({ status: 'new', due_date: null }, '2026-11-21'), false);
+  assert.equal(isOverdue({ status: 'new', due_date: '2020-01-01' }, ''), false);
+  assert.ok(rangeError('2026-12-10', '2026-12-01')); assert.equal(rangeError('2026-12-01', '2026-12-01'), ''); assert.equal(rangeError('', '2026-12-01'), '');
+  const g = ganttRows([{ id: 1, start_date: '2026-11-30', due_date: '2026-12-14' }]);       // 30 Nov 2026 is a Monday
+  assert.equal(scaleTicks(g.min, g.span, 'day').length, 15);
+  assert.deepEqual(scaleTicks(g.min, g.span, 'week').map((t) => t.text), ['30.11', '07.12', '14.12']);
+  assert.deepEqual(scaleTicks(g.min, g.span, 'month').map((t) => t.text), ['Дек 2026']);
+  assert.equal(todayLeft('2026-12-07', g.min, g.span), (7 / 15) * 100);
+  assert.equal(todayLeft('', g.min, g.span), null);
+  assert.ok(trackWidth(15, 'day') > trackWidth(15, 'week') && trackWidth(15, 'week') > 0 && trackWidth(1, 'month') >= 320);
+  const rows = [{ task: { project_id: 'p2', id: 1 } }, { task: { project_id: null, id: 2 } }, { task: { project_id: 'p1', id: 3 } }, { task: { project_id: 'p2', id: 4 } }];
+  const groups = groupRows(rows, { p1: 'Альфа', p2: 'Бета' });
+  assert.deepEqual(groups.map((x) => [x.title, x.rows.length]), [['Альфа', 1], ['Бета', 2], ['Без проекта', 1]]);   // standalone tasks last
+  assert.equal(groupRows([{ task: { project_id: 'p9' } }], {})[0].title, 'Проект');
+});
+
+await test('diffChanges handles the start date', () => {
+  assert.deepEqual(diffChanges({ title: 'a', start_date: null }, { title: 'a', start_date: '2026-12-01' }), { start_date: '2026-12-01' });
+  assert.deepEqual(diffChanges({ title: 'a', start_date: '2026-12-01' }, { title: 'a', start_date: ' ' }), { start_date: null });
 });
 
 console.log(`${passed} passed`);

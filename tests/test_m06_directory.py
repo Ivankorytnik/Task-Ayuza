@@ -1,4 +1,5 @@
 """M06.0 tests: workspace list and directory for the client."""
+import re
 import pytest
 from fastapi.testclient import TestClient
 
@@ -31,6 +32,7 @@ def test_m01_directory_for_members_only(client, service, acl, w, migrator):
     assert str(w.team) in [t['id'] for t in body['teams']] and str(w.team) in body['my_team_ids']
     assert {str(member.id), str(solo.id)} <= {m['user_id'] for m in body['members']}
     assert set(body['members'][0]) == {'user_id', 'display_name', 'role'}                 # no login or other account data
+    assert re.fullmatch(r'\d{4}-\d{2}-\d{2}', body['today']) and body['timezone']      # the workspace-local date for the client
     assert client.get(f'/api/v1/workspaces/{w.ws}/directory', headers=read(solo)).json()['my_team_ids'] == []
     missing = client.get('/api/v1/workspaces/00000000-0000-4000-8000-000000000000/directory', headers=read(member))
     hidden = client.get(f'/api/v1/workspaces/{w.ws}/directory', headers=read(stranger))

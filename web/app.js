@@ -1,11 +1,11 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { snapshotItems, MONTHS, ganttRows, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const state = { user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null, risks: [], snap: null, subs: false, release: '', riskLinks: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() };
+  blockers: [], deps: null, risks: [], snap: null, subs: false, release: '', riskLinks: {}, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() };
 const api = new Api((...args) => fetch(...args), () => { state.user = null; state.phase = 'login'; render(); });
 let pendingKey = null;                                  // one client_key per creation attempt, kept until it succeeds
 
@@ -113,7 +113,7 @@ function detailView() {
   const form = h('form', { class: 'card', on: { submit: async (e) => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(form).entries());
-    const problem = titleError(data.title) || dateError(data.due_date);
+    const problem = titleError(data.title) || dateError(data.start_date) || dateError(data.due_date) || rangeError(data.start_date, data.due_date);
     if (problem) { state.error = problem; return render(); }
     const changes = diffChanges(task, data);
     if (!Object.keys(changes).length) { state.message = 'Изменений нет.'; return render(); }
@@ -129,6 +129,7 @@ function detailView() {
   h('div', { class: 'bar' },
     h('div', {}, h('label', { for: 'dstatus' }, 'Статус'), h('select', { id: 'dstatus', name: 'status' }, options(STATUSES, task.status))),
     h('div', {}, h('label', { for: 'dprio' }, 'Приоритет'), h('select', { id: 'dprio', name: 'priority' }, options(PRIORITIES, task.priority))),
+    h('div', {}, h('label', { for: 'dstart' }, 'Начало'), h('input', { id: 'dstart', name: 'start_date', value: task.start_date || '', placeholder: '2026-12-01', maxlength: 10 })),
     h('div', {}, h('label', { for: 'ddue' }, 'Срок'), h('input', { id: 'ddue', name: 'due_date', value: task.due_date || '', placeholder: '2026-12-31', maxlength: 10 }))),
   h('div', { class: 'muted' }, `Версия ${task.version}`),
   h('button', { class: 'primary', type: 'submit' }, 'Сохранить'));
@@ -257,13 +258,23 @@ function snapshotView() {
 
 function ganttView() {
   const g = ganttRows(state.tasks);
+  const today = state.dir ? state.dir.today : '';
+  const width = `${trackWidth(g.span, state.scale)}px`;
+  const marker = todayLeft(today, g.min, g.span);
+  const track = (r) => h('div', { class: 'gtrack', css: { width } },
+    marker !== null && marker >= 0 && marker <= 100 ? h('div', { class: 'gtoday', css: { left: `${marker}%` } }) : '',
+    h('div', { class: `gbar ${r.task.status}${isOverdue(r.task, today) ? ' late' : ''}`, css: { left: `${r.left}%`, width: `${Math.max(r.width, 1)}%` },
+      title: `${r.task.start_date || ''} ${r.task.due_date || ''}${isOverdue(r.task, today) ? ' просрочена' : ''}` }));
   return h('div', { class: 'gantt' },
-    g.rows.length ? '' : h('p', { class: 'muted' }, 'Нет задач со сроками.'),
-    g.rows.map((r) => h('div', { class: 'grow' },
-      h('div', { class: 'glabel', on: { click: () => openTask(r.task.id) } }, r.task.title),
-      h('div', { class: 'gtrack' }, h('div', { class: `gbar ${r.task.status}`, css: { left: `${r.left}%`, width: `${Math.max(r.width, 1)}%` },
-        title: `${r.task.start_date || ''} ${r.task.due_date || ''}` })))),
-    g.undated.length ? h('p', { class: 'muted' }, `Без сроков: ${g.undated.length}`) : '');
+    h('div', { class: 'bar' }, SCALES.map(([key, text]) => h('button', { class: state.scale === key ? 'primary' : '',
+      on: { click: () => { state.scale = key; render(); } } }, text))),
+    g.rows.length ? h('div', { class: 'gscroll' }, h('div', { class: 'grow axis' }, h('div', { class: 'glabel' }, ''),
+      h('div', { class: 'gtrack', css: { width } }, scaleTicks(g.min, g.span, state.scale).map((t) => h('span', { class: 'tick', css: { left: `${t.left}%` } }, t.text))))) : h('p', { class: 'muted' }, 'Нет задач со сроками.'),
+    groupRows(g.rows, state.projNames).map((group) => h('div', { class: 'ggroup' }, h('h3', {}, group.title),
+      h('div', { class: 'gscroll' }, group.rows.map((r) => h('div', { class: 'grow' },
+        h('div', { class: 'glabel', on: { click: () => openTask(r.task.id) } }, r.task.title), track(r)))))),
+    g.undated.length ? h('div', { class: 'card' }, h('h3', {}, `Без дат (${g.undated.length})`),
+      g.undated.map((t) => h('div', { class: 'ctask', on: { click: () => openTask(t.id) } }, t.title))) : '');
 }
 
 function calendarView() {
@@ -365,7 +376,13 @@ function render() {
 
 // ---- data
 
-async function loadDirectory() { state.dir = state.ws ? await api.directory(state.ws) : null; }
+async function loadDirectory() {
+  state.dir = state.ws ? await api.directory(state.ws) : null;
+  state.projNames = {};
+  if (state.ws) {
+    try { for (const p of await api.projects(state.ws)) state.projNames[p.id] = p.title; } catch { /* groups fall back to a generic name */ }
+  }
+}
 
 async function loadTasks(reset) {
   try {

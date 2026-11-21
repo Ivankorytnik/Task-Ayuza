@@ -56,10 +56,10 @@ export function createPayload(form, ctx, clientKey) {
 // Only fields that really changed; an emptied date becomes null. The caller sends expected_version.
 export function diffChanges(original, edited) {
   const out = {};
-  for (const name of ['title', 'description', 'status', 'priority', 'due_date']) {
+  for (const name of ['title', 'description', 'status', 'priority', 'start_date', 'due_date']) {
     const before = original[name] == null ? '' : String(original[name]);
     const after = edited[name] == null ? '' : String(edited[name]).trim();
-    if (before !== after) out[name] = after === '' && name === 'due_date' ? null : after;
+    if (before !== after) out[name] = after === '' && (name === 'due_date' || name === 'start_date') ? null : after;
   }
   return out;
 }
@@ -150,6 +150,44 @@ export function ganttRows(tasks) {
   return { rows: rows.map((r) => ({ task: r.task, left: ((r.from - min) / span) * 100, width: ((r.to - r.from + 1) / span) * 100 })), undated, span, min };
 }
 
+export const OPEN = (task) => task.status !== 'done' && task.status !== 'cancelled';
+export const isOverdue = (task, today) => Boolean(today) && OPEN(task) && hasDate(task.due_date) && task.due_date < today;
+
+export function rangeError(start, due) {
+  return hasDate(start) && hasDate(due) && start > due ? 'Начало не может быть позже срока.' : '';
+}
+
+export const SCALES = [['day', 'День'], ['week', 'Неделя'], ['month', 'Месяц']];
+const PX_PER_DAY = { day: 28, week: 9, month: 3 };
+export const trackWidth = (span, scale) => Math.max(span * (PX_PER_DAY[scale] || 9), 320);
+
+// Axis ticks for the chosen scale: every day, every Monday, or every first of a month.
+export function scaleTicks(min, span, scale) {
+  const ticks = [];
+  for (let i = 0; i < span; i += 1) {
+    const d = new Date((min + i) * DAY);
+    const dom = d.getUTCDate(); const monday = d.getUTCDay() === 1;
+    const text = scale === 'day' ? String(dom)
+      : scale === 'week' ? (monday ? `${String(dom).padStart(2, '0')}.${String(d.getUTCMonth() + 1).padStart(2, '0')}` : null)
+        : (dom === 1 ? `${MONTHS[d.getUTCMonth()].slice(0, 3)} ${d.getUTCFullYear()}` : null);
+    if (text !== null) ticks.push({ left: (i / span) * 100, text });
+  }
+  return ticks;
+}
+
+export const todayLeft = (today, min, span) => (hasDate(today) && span ? ((dayNumber(today) - min) / span) * 100 : null);
+
+// Groups by project; independent tasks are shown separately as "Без проекта". Names come from the project list.
+export function groupRows(rows, names) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = row.task.project_id || '';
+    if (!groups.has(key)) groups.set(key, { key, title: key ? (names[key] || 'Проект') : 'Без проекта', rows: [] });
+    groups.get(key).rows.push(row);
+  }
+  return [...groups.values()].sort((a, b) => (a.key === '') - (b.key === '') || a.title.localeCompare(b.title, 'ru'));
+}
+
 // Month grid starting on Monday; each cell holds the tasks due that day.
 export function monthGrid(year, month, tasks) {
   const first = Date.UTC(year, month, 1) / DAY;
@@ -218,6 +256,7 @@ export class Api {
   me() { return this.request('GET', '/api/v1/auth/me'); }
   logout() { return this.request('POST', '/api/v1/auth/logout', undefined, true); }
   workspaces() { return this.request('GET', '/api/v1/workspaces'); }
+  projects(ws) { return this.request('GET', `/api/v1/workspaces/${ws}/projects?limit=200`); }
   directory(ws) { return this.request('GET', `/api/v1/workspaces/${ws}/directory`); }
   tasks(ws, status, after) {
     const q = new URLSearchParams({ limit: String(PAGE) });

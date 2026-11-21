@@ -2,7 +2,7 @@ import http from 'node:http'; import fs from 'node:fs'; import path from 'node:p
 const WEB=new URL('../../web/', import.meta.url).pathname;
 const csp="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 const J=(res,o)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(o));};
-const task=(i,st)=>({id:'t'+i,title:'Задача '+i,status:st,priority:'normal',version:1,start_date:i===1?'2026-11-10':null,due_date:i===3?null:'2026-11-'+(10+i*5),description:''});
+const task=(i,st)=>({id:'t'+i,title:'Задача '+i,status:st,priority:'normal',version:1,project_id:i===1?'p1':null,start_date:i===1?'2026-11-10':null,due_date:i===3?null:'2026-11-'+(10+i*5),description:''});
 http.createServer((req,res)=>{
   const u=req.url.split('?')[0];
   if(u.startsWith('/app/')||u==='/app'){const f=path.join(WEB,u==='/app/'||u==='/app'?'index.html':u.slice(5));
@@ -11,7 +11,9 @@ http.createServer((req,res)=>{
   if(u==='/api/v1/auth/prelogin')return J(res,{csrf_token:'x'});
   if(u==='/api/v1/auth/me')return J(res,{id:'u1',display_name:'Иван',must_change_password:false});
   if(u==='/api/v1/workspaces')return J(res,[{id:'w1',name:'Тест'}]);
-  if(u.endsWith('/directory'))return J(res,{role:'member',teams:[],members:[{user_id:'u1',display_name:'Иван',role:'member'}],my_team_ids:[]});
+  if(u.endsWith('/directory'))return J(res,{role:'member',teams:[],members:[{user_id:'u1',display_name:'Иван',role:'member'}],my_team_ids:[],timezone:'Europe/Moscow',today:'2026-11-21'});
+  if(u==='/api/v1/workspaces/w1/snapshot')return J(res,{total:3,active:2,in_progress:0,done:1,blocked:1,overdue:1,upcoming:0,no_due_date:1,no_project:2,include_subtasks:false,upcoming_days:7});
+  if(u==='/api/v1/workspaces/w1/projects')return J(res,[{id:'p1',title:'Проект Альфа'}]);
   if(u==='/api/v1/workspaces/w1/tasks')return J(res,[task(1,'new'),task(2,'done'),task(3,'blocked')]);
   if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/comments'))return J(res,[]);
   if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/blockers'))return J(res,[{id:'b1',version:1,title:'Ждём договор',status:'active',expected_resolution_date:'2026-12-20'}]);

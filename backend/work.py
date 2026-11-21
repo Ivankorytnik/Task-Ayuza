@@ -236,8 +236,10 @@ class WorkService:
                               w=wid).mappings().all()
             my_teams = execute(c, '''SELECT tm.team_id FROM task_ayuza.team_members tm
                 WHERE tm.user_id=:u AND tm.active ORDER BY tm.team_id''', u=u['id']).scalars().all()
+            zone = one(c, '''SELECT timezone, (clock_timestamp() AT TIME ZONE timezone)::date AS today
+                FROM task_ayuza.workspaces WHERE id=:w''', w=wid)
             return {'role': mine['role'], 'teams': [dict(t) for t in teams], 'members': [dict(m) for m in members],
-                    'my_team_ids': list(my_teams)}
+                    'my_team_ids': list(my_teams), 'timezone': zone['timezone'], 'today': zone['today'].isoformat()}
         return self.auth.protected(token, run)
 
     # ------------------------------------------------------------------ projects
