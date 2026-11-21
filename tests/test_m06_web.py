@@ -95,3 +95,12 @@ def test_n08_service_worker_is_served_and_shell_only():
     assert "pathname.startsWith('/app/')" in sw and "request.method === 'GET'" in sw and "'/api/'" in sw
     assert 'localStorage' not in sw and 'indexedDB' not in sw and 'Authorization' not in sw
     assert "register('sw.js'" in (WEB_DIR / 'app.js').read_text(encoding='utf-8')
+
+
+def test_n09_no_interactive_docs_pages_with_external_assets(client):
+    assert client.get('/docs').status_code == 404 and client.get('/redoc').status_code == 404
+    schema = client.get('/openapi.json')
+    assert schema.status_code == 200 and schema.headers['cache-control'] == 'no-store'
+    body = schema.json()
+    assert '/api/v1/auth/login' in body['paths'] and '/api/v1/risks' in body['paths']
+    assert 'http://' not in schema.text and 'cdn' not in schema.text.lower()

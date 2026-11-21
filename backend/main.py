@@ -50,7 +50,8 @@ async def lifespan(app: FastAPI):
         engine.dispose()
 
 
-app = FastAPI(title='Task-Ayuza',lifespan=lifespan,debug=False)
+# Swagger UI and ReDoc load scripts from an external CDN; only the machine-readable schema stays.
+app = FastAPI(title='Task-Ayuza',lifespan=lifespan,debug=False,docs_url=None,redoc_url=None)
 app.include_router(router)
 app.include_router(work_router)
 app.include_router(items_router)
