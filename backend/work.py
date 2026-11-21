@@ -419,7 +419,7 @@ class WorkService:
             _check_dates(values.get('start_date', task['start_date']), values.get('due_date', task['due_date']))
             sets = [f'{k}=:v_{k}' for k in values]
             if 'status' in values and new_status != task['status']:
-                sets.append("closed_at = CASE WHEN :v_status = 'done' THEN clock_timestamp() ELSE NULL END")
+                sets.append("closed_at = CASE WHEN CAST(:v_status AS text) = 'done' THEN clock_timestamp() ELSE NULL END")
             row = one(c, f'''UPDATE task_ayuza.tasks SET {', '.join(sets)}, version=version+1, updated_at=clock_timestamp()
                 WHERE id=:id AND version=:version RETURNING version''', id=tid, version=expected,
                       **{f'v_{k}': v for k, v in values.items()})

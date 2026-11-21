@@ -9,7 +9,7 @@ import pytest
 
 from backend.acl import AclError, AclService
 from backend.work import WorkService
-from test_m01_acl import (acl, admin_sql, mark_mfa, migrator, person, rows, status, violates,  # noqa: F401
+from test_m01_acl import (acl, admin_sql, make_workspace_admin, mark_mfa, migrator, person, rows, status, violates,  # noqa: F401
                           world)
 from test_m01_auth import service  # noqa: F401
 
@@ -65,8 +65,11 @@ def test_c01_project_creation_rights(service, acl, work, w, migrator):
                                               start_date='2026-12-02', due_date='2026-12-01')) == 422
     members = rows(migrator, 'SELECT role FROM task_ayuza.project_members WHERE project_id=:p', p=p['id'])
     assert [m['role'] for m in members] == ['project_manager']
-    grant(migrator, w.admin, w.ws, 'content_edit', w.sysadmin)
-    assert work.create_project(w.admin.token, w.admin.csrf, w.ws, 'Granted', '', w.member.id)['version'] == 1
+    granted = person(service)
+    make_workspace_admin(migrator, w.ws, granted)
+    assert status(lambda: work.create_project(granted.token, granted.csrf, w.ws, 'Granted', '', w.member.id)) == 403
+    grant(migrator, granted, w.ws, 'content_edit', w.sysadmin)
+    assert work.create_project(granted.token, granted.csrf, w.ws, 'Granted', '', w.member.id)['version'] == 1
 
 
 def test_c02_project_visibility_members_and_versions(service, acl, work, w, migrator):
@@ -166,12 +169,11 @@ def test_c05_project_tasks_and_hidden_project(service, acl, work, w, migrator):
     pm_task = new_task(work, pm, w, project_id=pid, owner=member)       # manager names an owner: assignment
     assert pm_task['version'] == 1
     # project task assigned to someone with no project role: task visible, project details hidden
-    work.assign_task(pm.token, pm.csrf, tid, 2, assignee_user_id=None)
     sub = join(acl, w, person(service))
-    work.assign_task(pm.token, pm.csrf, tid, 3, assignee_user_id=sub.id)
+    work.assign_task(pm.token, pm.csrf, tid, 2, assignee_user_id=sub.id)
     assert work.get_task(sub.token, tid)['project_id'] == pid
     assert status(lambda: work.get_project(sub.token, pid)) == 404
-    assert status(lambda: work.update_task(bystander.token, bystander.csrf, tid, 4, {'title': 'x'})) == 404
+    assert status(lambda: work.update_task(bystander.token, bystander.csrf, tid, 3, {'title': 'x'})) == 404
     assert work.list_tasks(bystander.token, w.ws) == []
 
 
