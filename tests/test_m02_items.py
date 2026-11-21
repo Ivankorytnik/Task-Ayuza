@@ -148,6 +148,8 @@ def test_d05_comments(service, acl, items, w, migrator):
     moderator = person(service)
     join(acl, w, moderator, 'observer', team=False)
     grant(migrator, moderator, w.ws, 'content_edit', w.sysadmin)
+    assert status(lambda: items.list_comments(moderator.token, t)) == 404   # moderation grant is not a read grant
+    grant(migrator, moderator, w.ws, 'read', w.sysadmin)
     hidden = items.set_comment_hidden(moderator.token, moderator.csrf, c1['id'], True, 2)
     assert hidden['version'] == 3
     assert [x['body'] for x in items.list_comments(other.token, t)] == [None]
