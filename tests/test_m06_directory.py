@@ -23,7 +23,7 @@ def client():
 def test_m01_directory_for_members_only(client, service, acl, w, migrator):
     member, solo, stranger = join(acl, w, person(service)), join(acl, w, person(service), team=False), person(service)
     listed = client.get('/api/v1/workspaces', headers=read(member)).json()
-    assert w.ws in {str(x['id']) for x in listed}
+    assert str(w.ws) in {str(x['id']) for x in listed}
     assert client.get('/api/v1/workspaces', headers=read(stranger)).json() == []
     d = client.get(f'/api/v1/workspaces/{w.ws}/directory', headers=read(member))
     assert d.status_code == 200 and d.headers['cache-control'] == 'no-store'
