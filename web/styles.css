@@ -36,3 +36,5 @@ tr.row{cursor:pointer}tr.row:hover,tr.row.on{background:#eef4fd}
 .tcard select{width:100%;margin-top:6px}.ttitle{cursor:pointer;font-weight:bold}
 .note strong{font-size:13px}
 @media (prefers-color-scheme:dark){.col{background:#232c37}.tcard{background:#1b222b}}
+.light{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:bold;color:#111}
+.light.gray{background:#c9ced6}.light.green{background:#7ed39a}.light.yellow{background:#f5d76e}.light.red{background:#f08a8a}

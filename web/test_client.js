@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -133,6 +133,30 @@ await test('notifications and blockers helpers', async () => {
     'POST /api/v1/notifications/n1/read', 'GET /api/v1/tasks/t1/blockers', 'POST /api/v1/tasks/t1/blockers',
     'GET /api/v1/tasks/t1/dependencies']);
   assert.equal(f.calls[2].init.headers['X-CSRF-Token'], undefined);   // no token yet: the server would answer 403
+});
+
+await test('risk helpers: severity, payloads, green needs evidence', () => {
+  assert.equal(severityLevel(2, 2), 'Низкая'); assert.equal(severityLevel(3, 3), 'Средняя');
+  assert.equal(severityLevel(4, 4), 'Высокая'); assert.equal(severityLevel(5, 5), 'Критическая');
+  assert.ok(riskPayload({ category: 'legal', description: ' ', probability: '3', impact: '3' }).error);
+  assert.ok(riskPayload({ category: 'legal', description: 'x', probability: '6', impact: '3' }).error);
+  assert.ok(riskPayload({ category: 'legal', description: 'x', probability: '2.5', impact: '3' }).error);
+  assert.deepEqual(riskPayload({ category: 'backup', description: ' Нет копии ', probability: '4', impact: '5', measures: '', due_date: '' }).payload,
+    { category: 'backup', description: 'Нет копии', probability: 4, impact: 5 });
+  assert.ok(riskPayload({ category: 'backup', description: 'x', probability: '1', impact: '1', due_date: '31.12.2026' }).error);
+  assert.ok(checkPayload({ result: 'pass', evidence: '', valid_until: '' }).error);
+  assert.ok(checkPayload({ result: 'pass', evidence: 'отчёт', valid_until: '2026-13-40' }).error);
+  assert.deepEqual(checkPayload({ result: 'fail', evidence: '', valid_until: '' }).payload, { result: 'fail' });
+  assert.deepEqual(checkPayload({ result: 'pass', evidence: 'отчёт 12', valid_until: '2026-12-31' }).payload,
+    { result: 'pass', evidence_reference: 'отчёт 12', valid_until: '2026-12-31T23:59:59+00:00' });
+});
+
+await test('export reads text and row count; errors keep status', async () => {
+  const ok = { ok: true, status: 200, headers: { get: (k) => ({ 'X-Export-Row-Count': '3' })[k] || null }, text: async () => 'a,b\n' };
+  const api = new Api(async () => ok);
+  assert.deepEqual(await api.exportTasks('w1', 'csv', ''), { text: 'a,b\n', rows: 3, name: 'tasks.csv' });
+  const denied = new Api(async () => ({ ok: false, status: 403 }));
+  await assert.rejects(() => denied.exportTasks('w1', 'json', 'done'), (e) => e.status === 403);
 });
 
 console.log(`${passed} passed`);

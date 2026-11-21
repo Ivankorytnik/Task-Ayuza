@@ -1,11 +1,11 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const state = { user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null };
+  blockers: [], deps: null, risks: [], release: '' };
 const api = new Api((...args) => fetch(...args), () => { state.user = null; state.phase = 'login'; render(); });
 let pendingKey = null;                                  // one client_key per creation attempt, kept until it succeeds
 
@@ -166,6 +166,64 @@ function boardView() {
     [h('option', { value: '' }, 'Перенести…'), ...allowedTargets(task.status).map((to) => h('option', { value: to }, label(STATUSES, to)))]))))));
 }
 
+function download(result) {
+  const url = URL.createObjectURL(new Blob([result.text], { type: 'text/plain;charset=utf-8' }));
+  const link = h('a', { href: url, download: result.name });
+  document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+}
+
+async function exportTasks(format) {
+  try {
+    const result = await api.exportTasks(state.ws, format, state.status);
+    download(result); state.error = ''; state.message = `Выгружено строк: ${result.rows}.`;
+  } catch (error) { state.message = ''; state.error = error.status === 403 ? 'Выгрузка требует права и свежего подтверждения MFA.' : error.message; }
+  render();
+}
+
+async function loadRisks() {
+  try { state.risks = await api.risks(); state.error = ''; }
+  catch (error) { state.risks = []; state.error = error.status === 404 ? 'Центр рисков доступен только контролёру рисков.' : error.message; }
+  render();
+}
+
+function riskCard(risk) {
+  const form = h('form', { class: 'bar', on: { submit: async (e) => {
+    e.preventDefault();
+    const out = checkPayload(Object.fromEntries(new FormData(form).entries()));
+    if (out.error) { state.error = out.error; return render(); }
+    try { await api.recordCheck(risk.id, out.payload); state.error = ''; await loadRisks(); } catch (error) { fail(error); }
+  } } },
+  h('select', { name: 'result', 'aria-label': 'Результат проверки' }, CHECK_RESULTS.map(([k, t]) => h('option', { value: k }, t))),
+  h('input', { name: 'evidence', placeholder: 'Подтверждение', maxlength: 500, 'aria-label': 'Подтверждение' }),
+  h('input', { name: 'valid_until', placeholder: 'Действует до 2026-12-31', maxlength: 10, 'aria-label': 'Действует до' }),
+  h('button', { type: 'submit' }, 'Записать проверку'));
+  return h('div', { class: 'card' },
+    h('span', { class: `light ${risk.control_status}`, role: 'img', 'aria-label': label(TRAFFIC, risk.control_status) }, label(TRAFFIC, risk.control_status)),
+    h('div', {}, h('strong', {}, risk.description)),
+    h('div', { class: 'muted' }, `${label(RISK_CATEGORIES, risk.category)} · вероятность ${risk.probability}, влияние ${risk.impact} · ${severityLevel(risk.probability, risk.impact)}`),
+    form);
+}
+
+function risksView() {
+  const form = h('form', { class: 'card', on: { submit: async (e) => {
+    e.preventDefault();
+    const out = riskPayload(Object.fromEntries(new FormData(form).entries()));
+    if (out.error) { state.error = out.error; return render(); }
+    try { await api.createRisk(out.payload); state.error = ''; await loadRisks(); } catch (error) { fail(error); }
+  } } },
+  h('h3', {}, 'Новый риск'),
+  h('label', { for: 'rcat' }, 'Категория'), h('select', { id: 'rcat', name: 'category' }, RISK_CATEGORIES.map(([k, t]) => h('option', { value: k }, t))),
+  h('label', { for: 'rdesc' }, 'Описание'), h('textarea', { id: 'rdesc', name: 'description', maxlength: 2000, required: true }),
+  h('div', { class: 'bar' },
+    h('div', {}, h('label', { for: 'rp' }, 'Вероятность 1-5'), h('input', { id: 'rp', name: 'probability', value: '3', maxlength: 1 })),
+    h('div', {}, h('label', { for: 'ri' }, 'Влияние 1-5'), h('input', { id: 'ri', name: 'impact', value: '3', maxlength: 1 })),
+    h('div', {}, h('label', { for: 'rdue' }, 'Срок мер'), h('input', { id: 'rdue', name: 'due_date', placeholder: '2026-12-31', maxlength: 10 }))),
+  h('label', { for: 'rmeas' }, 'Меры'), h('textarea', { id: 'rmeas', name: 'measures', maxlength: 5000 }),
+  h('button', { type: 'submit' }, 'Добавить риск'));
+  return h('div', {}, h('div', { class: 'bar' }, h('button', { on: { click: loadRisks } }, 'Обновить')),
+    state.risks.length ? '' : h('p', { class: 'muted' }, 'Рисков нет.'), state.risks.map(riskCard), form);
+}
+
 function notesView() {
   return h('div', {}, h('div', { class: 'bar' }, h('button', { on: { click: loadNotes } }, 'Обновить')),
     state.notes.length ? '' : h('p', { class: 'muted' }, 'Уведомлений нет.'),
@@ -209,16 +267,19 @@ function mainView() {
       state.workspaces.map((w) => h('option', { value: w.id, selected: w.id === state.ws }, w.name))),
     h('label', { for: 'st' }, 'Статус'),
     h('select', { id: 'st', on: { change: async (e) => { state.status = e.target.value; await loadTasks(true); } } }, options(STATUSES, state.status, 'Все')));
-  const tabs = h('div', { class: 'bar' }, [['list', 'Список'], ['board', 'Kanban'], ['notes', `Уведомления${state.unread ? ` (${state.unread})` : ''}`]]
+  const tabs = h('div', { class: 'bar' }, [['list', 'Список'], ['board', 'Kanban'], ['risks', 'Риски'], ['notes', `Уведомления${state.unread ? ` (${state.unread})` : ''}`]]
     .map(([key, text]) => h('button', { class: state.view === key ? 'primary' : '', on: { click: async () => {
       state.view = key; state.error = ''; state.message = '';
-      if (key === 'notes') await loadNotes(); else await loadTasks(true);
+      if (key === 'notes') await loadNotes(); else if (key === 'risks') await loadRisks(); else await loadTasks(true);
     } } }, text)));
   const table = h('table', {}, h('thead', {}, h('tr', {}, ['Название', 'Статус', 'Приоритет', 'Срок'].map((t) => h('th', {}, t)))),
     h('tbody', {}, state.tasks.map(taskRow)));
   const messages = [h('div', { class: 'error', role: 'alert' }, state.error), h('div', { class: 'ok' }, state.message)];
   if (state.view === 'notes') return [tabs, messages, notesView()];
-  return [bar, tabs, messages, state.dir ? createView() : '', state.view === 'board' ? boardView() : table,
+  if (state.view === 'risks') return [tabs, messages, risksView(), h('p', { class: 'muted' }, state.release)];
+  return [bar, tabs, messages, state.dir ? createView() : '', h('div', { class: 'bar' }, h('button', { on: { click: () => exportTasks('csv') } }, 'Выгрузить CSV'),
+      h('button', { on: { click: () => exportTasks('json') } }, 'Выгрузить JSON')),
+    state.view === 'board' ? boardView() : table,
     state.more ? h('button', { on: { click: async () => { await loadTasks(false); } } }, 'Показать ещё') : '',
     state.selected ? [detailView(), blockersView()] : ''];
 }
@@ -272,6 +333,7 @@ async function enter() {
   state.ws = state.workspaces.length ? state.workspaces[0].id : null;
   state.message = state.workspaces.length ? '' : 'У вас пока нет доступных пространств.';
   await loadDirectory();
+  try { state.release = (await api.release()).label; } catch { state.release = ''; }
   if (state.ws) await loadTasks(true); else render();
 }
 

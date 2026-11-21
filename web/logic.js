@@ -85,6 +85,43 @@ export function blockerPayload(form) {
   return payload;
 }
 
+export const RISK_CATEGORIES = [['legal', 'Юридический'], ['personal_data', 'Персональные данные'], ['cybersecurity', 'Кибербезопасность'],
+  ['access', 'Доступы'], ['availability', 'Доступность'], ['database', 'База данных'], ['backup', 'Резервные копии'],
+  ['quality', 'Качество'], ['release', 'Релиз'], ['organizational', 'Организационный'], ['other', 'Другое']];
+export const TRAFFIC = [['gray', 'Серый: не проверено'], ['green', 'Зелёный: проверено'], ['yellow', 'Жёлтый: требует внимания'], ['red', 'Красный: критично']];
+export const CHECK_RESULTS = [['pass', 'Пройдена'], ['fail', 'Не пройдена'], ['critical', 'Критично']];
+
+export function severityLevel(probability, impact) {
+  const v = probability * impact;
+  return v <= 4 ? 'Низкая' : v <= 9 ? 'Средняя' : v <= 16 ? 'Высокая' : 'Критическая';
+}
+
+const scaleOk = (v) => Number.isInteger(v) && v >= 1 && v <= 5;
+
+export function riskPayload(form) {
+  const p = Number(form.probability); const i = Number(form.impact);
+  if (!scaleOk(p) || !scaleOk(i)) return { error: 'Вероятность и влияние: целые числа от 1 до 5.' };
+  const description = (form.description || '').trim();
+  if (!description || description.length > 2000) return { error: 'Описание: от 1 до 2000 символов.' };
+  const payload = { category: form.category, description, probability: p, impact: i };
+  if (form.measures && form.measures.trim()) payload.measures = form.measures.trim();
+  if (form.due_date) { const e = dateError(form.due_date); if (e) return { error: e }; payload.due_date = form.due_date; }
+  return { payload };
+}
+
+export function checkPayload(form) {
+  const payload = { result: form.result };
+  if (form.evidence && form.evidence.trim()) payload.evidence_reference = form.evidence.trim();
+  if (form.valid_until) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.valid_until) || dateError(form.valid_until)) return { error: 'Срок действия: дата ГГГГ-ММ-ДД.' };
+    payload.valid_until = `${form.valid_until}T23:59:59+00:00`;
+  }
+  if (payload.result === 'pass' && !(payload.evidence_reference && payload.valid_until)) {
+    return { error: 'Для зелёного статуса нужны подтверждение и срок действия.' };
+  }
+  return { payload };
+}
+
 export class Api {
   constructor(fetchImpl, onAuthLost = () => {}) {
     this.fetch = fetchImpl;
@@ -140,5 +177,18 @@ export class Api {
   blockers(id) { return this.request('GET', `/api/v1/tasks/${id}/blockers`); }
   createBlocker(id, payload) { return this.request('POST', `/api/v1/tasks/${id}/blockers`, payload, true); }
   dependencies(id) { return this.request('GET', `/api/v1/tasks/${id}/dependencies`); }
+  release() { return this.request('GET', '/api/v1/release'); }
+  risks() { return this.request('GET', '/api/v1/risks?limit=200'); }
+  createRisk(payload) { return this.request('POST', '/api/v1/risks', payload, true); }
+  recordCheck(id, payload) { return this.request('POST', `/api/v1/risks/${id}/checks`, payload, true); }
+  async exportTasks(ws, format, status) {
+    const body = { format }; if (status) body.status = status;
+    const headers = { Accept: '*/*', 'Content-Type': 'application/json' };
+    if (this.csrf) headers['X-CSRF-Token'] = this.csrf;
+    const res = await this.fetch(`/api/v1/workspaces/${ws}/exports`, { method: 'POST', headers, credentials: 'same-origin',
+      cache: 'no-store', body: JSON.stringify(body) });
+    if (!res.ok) { if (res.status === 401) this.onAuthLost(); throw new ApiError(res.status); }
+    return { text: await res.text(), rows: Number(res.headers.get('X-Export-Row-Count') || 0), name: `tasks.${format}` };
+  }
   addComment(id, body) { return this.request('POST', `/api/v1/tasks/${id}/comments`, { body }, true); }
 }
