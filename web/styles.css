@@ -1,0 +1,31 @@
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1b2430;background:#f3f5f8}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:10px 16px;background:#1f3a5f;color:#fff}
+header .brand{font-weight:bold;font-size:18px;flex:1}
+main{padding:12px 16px 24px;max-width:1100px;margin:0 auto}
+button{font-family:inherit;font-size:13px;padding:7px 12px;border:1px solid #b9c3d1;background:#fff;border-radius:6px;cursor:pointer}
+button:hover{background:#eef2f7}
+button.primary{background:#2c7be5;color:#fff;border-color:#2c7be5}
+input,select,textarea{font-family:inherit;font-size:14px;padding:7px 8px;border:1px solid #b9c3d1;border-radius:6px;background:#fff;max-width:100%}
+textarea{width:100%;min-height:70px}
+label{display:block;margin:8px 0 3px;font-size:12px;color:#46556a}
+.card{background:#fff;border-radius:8px;padding:14px;margin:12px 0;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.login{max-width:360px;margin:60px auto}
+.login h1{font-size:20px;margin:0 0 8px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.error{color:#b3261e;margin:8px 0;min-height:18px}
+.ok{color:#1d6b34}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #e6ebf1;vertical-align:top}
+th{background:#e9eef5;font-size:12px;text-transform:uppercase;color:#46556a}
+tr.row{cursor:pointer}tr.row:hover,tr.row.on{background:#eef4fd}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;background:#e6ebf1}
+.badge.blocked{background:#fbdcd9;color:#8a1c14}.badge.done{background:#bfe6c9}.badge.in_progress{background:#d3f0dc}
+.badge.planned{background:#dbe8fb}.badge.cancelled{background:#ddd;color:#555}.badge.critical{background:#b3261e;color:#fff}
+.muted{color:#6b7a8f;font-size:12px}
+.comment{border-top:1px solid #e6ebf1;padding:8px 0}
+@media (prefers-color-scheme:dark){
+ body{background:#12161c;color:#e6ebf1}.card,table{background:#1b222b}th{background:#232c37;color:#aab6c6}
+ td,th{border-color:#2a3441}input,select,textarea,button{background:#1b222b;color:#e6ebf1;border-color:#3a4757}
+ tr.row:hover,tr.row.on{background:#243041}.muted{color:#93a1b3}
+}

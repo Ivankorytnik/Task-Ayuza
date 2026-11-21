@@ -19,6 +19,8 @@ jobs:
       - name: Demo logic tests (skipped until demo/ exists in main)
         run: |
           if [ -f demo/test_logic.js ]; then node demo/test_logic.js; else echo "demo/ not present"; fi
+      - name: Web client logic tests
+        run: node web/test_client.js
   backend:
     runs-on: ubuntu-24.04
     steps:

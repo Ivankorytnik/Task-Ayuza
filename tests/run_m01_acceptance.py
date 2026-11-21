@@ -174,7 +174,7 @@ def main():
                 runtime.dispose()
                 test_env = dict(env, TASK_AYUZA_DATABASE_URL=urls['runtime'],
                     TASK_AYUZA_TEST_RUNTIME_URL=urls['runtime'], TASK_AYUZA_TEST_BACKUP_URL=urls['backup'], TASK_AYUZA_TEST_MIGRATOR_URL=urls['migrator'], TASK_AYUZA_ORIGIN='https://test.local', TASK_AYUZA_AUTH_HMAC_KEY=secrets.token_hex(32), TASK_AYUZA_MFA_KEY=secrets.token_hex(32))
-                subprocess.run([sys.executable, '-m', 'pytest', '-q', '-s', 'tests/test_m01_foundation.py', 'tests/test_m01_auth.py', 'tests/test_m01_acl.py', 'tests/test_m01_mfa_grants.py', 'tests/test_m02_work.py', 'tests/test_m02_items.py', 'tests/test_m02_events.py', 'tests/test_m03_links.py', 'tests/test_m04_notifications.py', 'tests/test_m04_risks.py', 'tests/test_m04_exports.py', 'tests/test_m05_api.py', 'tests/test_m05_api_items.py', 'tests/test_m05_api_ops.py', 'tests/test_m06_directory.py', '--tb=short'], env=test_env, check=True)
+                subprocess.run([sys.executable, '-m', 'pytest', '-q', '-s', 'tests/test_m01_foundation.py', 'tests/test_m01_auth.py', 'tests/test_m01_acl.py', 'tests/test_m01_mfa_grants.py', 'tests/test_m02_work.py', 'tests/test_m02_items.py', 'tests/test_m02_events.py', 'tests/test_m03_links.py', 'tests/test_m04_notifications.py', 'tests/test_m04_risks.py', 'tests/test_m04_exports.py', 'tests/test_m05_api.py', 'tests/test_m05_api_items.py', 'tests/test_m05_api_ops.py', 'tests/test_m06_directory.py', 'tests/test_m06_web.py', '--tb=short'], env=test_env, check=True)
                 engine.dispose()
                 print('A04-A09 PASS: effective ACL and integration suite; no skipped tests', flush=True)
         finally:
