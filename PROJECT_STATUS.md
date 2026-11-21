@@ -1,5 +1,5 @@
 # Task-Ayuza | Статус
-Срез STATUS-26 от 21.11.2026 (МСК). Проверенный интегрированный `main`: `42c2d1e76f44958be5aede1865959a1ab786ff22`. Управление проектом передано владельцем Claude (20-21.11.2026); основной исполнитель по AGENTS остаётся Codex, Claude выполняет задачи по явной передаче в Issue/PR.
+Срез STATUS-32 от 21.11.2026 (МСК). Проверенный интегрированный `main`: `a9c4f656b5f13c0bad417fff619fc0d668a74740`. Управление проектом передано владельцем Claude (20-21.11.2026); основной исполнитель по AGENTS остаётся Codex, Claude выполняет задачи по явной передаче в Issue/PR.
 
 ## Интегрированные факты на проверенном main
 - M01.1 интегрирован (PR #1/#5): PostgreSQL/Alembic, organization, append-only аудит, роли БД, проверка схемы. Исторический отчёт: [M01-1-RESULTS.md](docs/M01-1-RESULTS.md).
@@ -11,6 +11,8 @@
 - **M01.3 (ACL, пространства и команды) интегрирована** через [PR #22](https://github.com/Ivankorytnik/Task-Ayuza/pull/22) (Issue реализации #21), squash merge commit `676330ac54a5c685609a47faf6609f573aadcbe9`. Миграция `0003_m01_acl` (workspaces, teams, workspace_members, team_members, workspace_teams, workspace_team_access, system_role_assignments, расширение аудита), внутренний сервис `backend/acl.py` без HTTP-маршрутов. CI на HEAD PR (66a35bb), два прогона: backend 66 passed, 0 skipped на PostgreSQL 16.16, local-stack и demo success; после merge CI на `main` зелёный. Независимого ревью не было, обзор diff выполнил автор.
 - **M01.4 (MFA, административные гранты, системные роли) интегрирована** через [PR #26](https://github.com/Ivankorytnik/Task-Ayuza/pull/26) (Issue реализации #25), squash merge commit `42c2d1e76f44958be5aede1865959a1ab786ff22`. Миграция `0004_m01_mfa_grants`: user_mfa (секрет шифруется AES-256-GCM, ключ `TASK_AYUZA_MFA_KEY` только из окружения), mfa_backup_codes, administrative_grants (до 30 дней, экстренные до 2 часов, без самоодобрения и без продления), setup_state, роли system_owner и access_approver, расширенный аудит. Код: `backend/mfa.py`, `backend/grants.py`, `backend/setup.py` (закрытая одноразовая процедура через migrator, без HTTP и без паролей по умолчанию), изменения `backend/acl.py` (административные изменения требуют свежего MFA, гранты по часам БД). CI на HEAD PR: backend 74 passed, 0 skipped, local-stack и demo success. Независимого ревью не было, обзор diff выполнил автор.
 - Отложено, не принято: project/task ACL (нет таблиц, M02); публичный административный HTTP API и UI управления; делегирование assign/archive_restore/manage_access/export через workspace_team_access; первый администратор пространства вне процедуры setup; операции архивации пространства и деактивации команды; вход через резервные коды без ограничения по IP (лимит только по пользователю).
+- **M02.1 (projects, project_members, tasks, объектные права) интегрирована** через [PR #30](https://github.com/Ivankorytnik/Task-Ayuza/pull/30) (Issue реализации #29), squash merge commit `a9c4f656b5f13c0bad417fff619fc0d668a74740`. Миграция `0005_m02_projects_tasks`, закрытый сервис `backend/work.py` без HTTP: права по конкретному объекту (D01/D02), без обхода для администратора, гранты D03 только со свежим MFA, статусы по D04 (done и cancelled терминальны, переоткрытие явное, closed_at только для done), оптимистичные версии и идемпотентность, аудит без названий и текстов. CI на HEAD PR: backend 84 passed, 0 skipped, local-stack и demo success. Независимого ревью не было, обзор diff выполнил автор.
+- Отложено в M02: статус проекта (нужен справочник), этапы, метки, подзадачи, чек-листы, комментарии, task_events, task_access_grants, идемпотентность запросов (Idempotency-Key), публичный API; зависимости и блокеры (M03).
 - M01 как набор подэтапов M01.1–M01.4 интегрирован в код; Issue #14 остается открытым до решения владельца о закрытии. F01–F37 не приняты.
 
 ## Доказательства приёмки и пределы
@@ -27,7 +29,7 @@
 - До отдельного допуска **деплой, production, реальные данные и платные операции запрещены**. Текущий статус production: **NO-GO**.
 
 ## Единственная карточка следующей задачи
-**ID: M02.1.** projects и tasks (минимальное ядро): таблицы, строгие FK/NULL/версии, project/task ACL по D01/D02 поверх `backend/acl.py`, аудит изменений. Основание: docs/DATA-MODEL-ACCESS-2.2.md (этап M02), docs/TZ-2.2.md F01–F03.
-- Отдельный Issue, ветка от свежего `main`, один PR, миграция 0005 после 0004, без изменения 0001-0004; без обхода D01–D03.
+**ID: M02.2.** Метки, этапы проекта, подзадачи (родитель в том же пространстве и проекте, без циклов), чек-листы и комментарии с доступом через задачу; task_events с атрибуцией на момент события (D04, D06). Основание: docs/DATA-MODEL-ACCESS-2.2.md §§2.2, 3, 5, docs/TZ-2.2.md F01-F03/F13/F14.
+- Отдельный Issue, ветка от свежего `main`, один PR, миграция 0006 после 0005, без изменения 0001-0005; без обхода D01-D03.
 - Каждая приёмка подтверждается тестами в CI; отложенное помечается deferred, а не PASS.
 - Без деплоя, production, реальных данных и платных операций.
