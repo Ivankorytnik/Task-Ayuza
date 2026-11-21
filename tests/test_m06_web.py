@@ -104,3 +104,9 @@ def test_n09_no_interactive_docs_pages_with_external_assets(client):
     body = schema.json()
     assert '/api/v1/auth/login' in body['paths'] and '/api/v1/risks' in body['paths']
     assert 'http://' not in schema.text and 'cdn' not in schema.text.lower()
+
+
+def test_n10_gantt_follows_the_spec_views():
+    app = (WEB_DIR / 'app.js').read_text(encoding='utf-8')
+    assert 'scaleTicks' in app and 'groupRows' in app and 'isOverdue' in app and "name: 'start_date'" in app
+    assert 'Без дат' in app and 'gtoday' in app and 'style:' not in app

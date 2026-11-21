@@ -45,3 +45,6 @@ tr.row{cursor:pointer}tr.row:hover,tr.row.on{background:#eef4fd}
 .cell{min-height:72px;background:#e9eef5;border-radius:4px;padding:4px;font-size:12px}.ctask{background:#fff;border-radius:3px;margin-top:2px;padding:1px 4px;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 @media (prefers-color-scheme:dark){.gtrack,.cell{background:#232c37}.ctask{background:#1b222b}}
 .snap{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.snapitem.overdue strong{color:#c0504d}
+.gscroll{overflow-x:auto}.axis .tick{position:absolute;top:0;font-size:11px;white-space:nowrap}.axis .gtrack{height:18px;background:none}
+.gtoday{position:absolute;top:0;bottom:0;width:2px;background:#c0504d;z-index:1}.gbar.late{outline:2px solid #c0504d}
+.ggroup h3{font-size:13px;margin:12px 0 4px}
