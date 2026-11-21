@@ -103,7 +103,7 @@ def main():
                 alembic('upgrade', 'head')
                 assert before == repr(snapshot())
                 tables_now, counts_now = snapshot()[:2]
-                assert tables_now == ['alembic_version', 'audit_events', 'auth_limit_events', 'login_attempts', 'organization', 'prelogin_limits', 'sessions', 'system_role_assignments', 'team_members', 'teams', 'users', 'workspace_members', 'workspace_team_access', 'workspace_teams', 'workspaces']
+                assert tables_now == ['administrative_grants', 'alembic_version', 'audit_events', 'auth_limit_events', 'login_attempts', 'mfa_backup_codes', 'organization', 'prelogin_limits', 'sessions', 'setup_state', 'system_role_assignments', 'team_members', 'teams', 'user_mfa', 'users', 'workspace_members', 'workspace_team_access', 'workspace_teams', 'workspaces']
                 assert counts_now == [1 if t == 'alembic_version' else 0 for t in tables_now]
                 with engine.connect() as c:
                     assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0004_m01_mfa_grants'
