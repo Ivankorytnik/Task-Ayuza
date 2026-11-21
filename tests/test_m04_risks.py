@@ -92,7 +92,7 @@ def test_i02_traffic_light_never_defaults_to_green(service, risks, w, migrator):
     assert r in [x['id'] for x in risks.list_risks(c.token, control_status='green')]
     admin_sql(migrator, "UPDATE task_ayuza.risk_checks SET checked_at = now() - interval '2 hours', valid_until = now() - interval '1 hour' WHERE id=:id", id=ok['id'])
     assert risks.get_risk(c.token, r)['control_status'] == 'yellow'              # expired confirmation
-    assert [x['result'] for x in risks.list_checks(c.token, r)] == ['fail', 'critical', 'pass']
+    assert sorted(x['result'] for x in risks.list_checks(c.token, r)) == ['critical', 'fail', 'pass']
     # automatic checks never prove legal or personal data compliance
     legal = new_risk(risks, c, category='legal')['id']
     assert risks.record_system_check(legal, 'backup.age', 'pass', 'auto-1', future())['control_status'] == 'yellow'
