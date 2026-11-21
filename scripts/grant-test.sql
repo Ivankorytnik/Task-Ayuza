@@ -56,3 +56,9 @@ GRANT SELECT ON task_ayuza.task_events, task_ayuza.idempotency_requests, task_ay
 GRANT SELECT, INSERT, UPDATE ON task_ayuza.task_dependencies, task_ayuza.blockers TO task_ayuza_runtime;
 GRANT SELECT, INSERT ON task_ayuza.blocker_events TO task_ayuza_runtime;
 GRANT SELECT ON task_ayuza.task_dependencies, task_ayuza.blockers, task_ayuza.blocker_events TO task_ayuza_backup;
+
+-- M04.1. Runtime may queue and process outbox rows and mark its own notifications read; no DELETE/TRUNCATE/DDL.
+GRANT SELECT, INSERT, UPDATE ON task_ayuza.outbox_events TO task_ayuza_runtime;
+GRANT SELECT, INSERT ON task_ayuza.notifications TO task_ayuza_runtime;
+GRANT UPDATE (read_at) ON task_ayuza.notifications TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.outbox_events, task_ayuza.notifications TO task_ayuza_backup;

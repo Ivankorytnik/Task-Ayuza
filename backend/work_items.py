@@ -15,6 +15,7 @@ import uuid
 
 from backend.acl import (AclError, _forbidden, _not_found, as_uuid, audit, check_version, clean_text,
                          grant_capability, membership)
+from backend.outbox import enqueue, people
 from backend.auth import execute, one
 from backend.work import UNSET, WorkService, _check_dates, _date, _event, _grant_ok
 
@@ -371,6 +372,8 @@ class ItemsService(WorkService):
                 VALUES (:id, :w, :t, :a, :b)''', id=cid, w=task['workspace_id'], t=tid, a=u['id'], b=body)
             audit(c, u, s, request_id=request_id, entity_kind='comment', entity_id=cid, action='comment.added',
                   workspace_id=task['workspace_id'], old=None, new={'hidden': False, 'deleted': False})
+            enqueue(c, actor_id=u['id'], task=task, event_type='comment_added', source_id=cid, source_key=str(cid),
+                    recipients=people(task))
             return {'id': cid, 'version': 1}
         return self.auth.protected(token, run, csrf=csrf, mutation=True)
 
