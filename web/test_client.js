@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -266,6 +266,26 @@ await test('task query carries only the filters that are set', () => {
     'limit=50&status=new&mine=true&overdue=true&blocked=true&team_id=t1&project_id=p1&after=x');
   assert.equal(taskQuery(50, { mine: false, team: '', project: '' }, null), 'limit=50');
   assert.equal(filtersActive({ mine: false, team: '' }), false); assert.equal(filtersActive({ project: 'p' }), true); assert.equal(filtersActive(null), false);
+});
+
+await test('dateError rejects impossible calendar dates', () => {
+  assert.equal(dateError('2026-02-28'), ''); assert.equal(dateError('2028-02-29'), '');
+  assert.ok(dateError('2026-02-30')); assert.ok(dateError('2027-02-29')); assert.ok(dateError('2026-04-31')); assert.ok(dateError('2026-00-10'));
+  assert.equal(dateError(''), '');
+});
+
+await test('metrics period: default, validation, request', async () => {
+  assert.deepEqual(defaultPeriod('2026-11-21', 30), { from: '2026-10-23', to: '2026-11-21' });
+  assert.deepEqual(defaultPeriod('2026-03-01', 1), { from: '2026-03-01', to: '2026-03-01' });
+  assert.deepEqual(defaultPeriod('', 30), { from: '', to: '' });
+  assert.equal(periodError('2026-10-23', '2026-11-21'), '');
+  assert.ok(periodError('2026-11-21', '2026-10-23')); assert.ok(periodError('21.11.2026', '2026-11-22'));
+  assert.ok(periodError('2026-02-30', '2026-03-01'));
+  assert.equal(periodError('2025-11-21', '2026-11-21'), '');                 // 366 days inclusive is the largest allowed
+  assert.ok(periodError('2025-11-20', '2026-11-21'));
+  assert.deepEqual(METRIC_LABELS.map((x) => x[0]), ['created', 'completed', 'cancelled', 'reopened']);
+  const f = fakeFetch([]); await new Api(f).metrics('w1', '2026-10-23', '2026-11-21');
+  assert.equal(f.calls[0].path, '/api/v1/workspaces/w1/metrics?from=2026-10-23&to=2026-11-21');
 });
 
 console.log(`${passed} passed`);

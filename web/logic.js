@@ -38,9 +38,16 @@ export function titleError(title) {
   return '';
 }
 
+// A real calendar date: Date.parse accepts 2026-02-30, so the parts are compared after a round trip.
+function realDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(Date.UTC(+value.slice(0, 4), +value.slice(5, 7) - 1, +value.slice(8, 10)));
+  return d.toISOString().slice(0, 10) === value;
+}
+
 export function dateError(value) {
   if (!value) return '';
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) ? '' : 'Дата в формате ГГГГ-ММ-ДД.';
+  return realDate(value) ? '' : 'Дата в формате ГГГГ-ММ-ДД.';
 }
 
 export function createPayload(form, ctx, clientKey) {
@@ -233,6 +240,23 @@ export function taskQuery(limit, filters, after) {
 
 export const filtersActive = (f) => Boolean(f && (f.mine || f.overdue || f.blocked || f.team || f.project));
 
+export const METRIC_LABELS = [['created', 'Создано'], ['completed', 'Завершено'], ['cancelled', 'Отменено'], ['reopened', 'Открыто повторно']];
+export const MAX_PERIOD_DAYS = 366;
+
+// The default period ends on the workspace-local "today" (from the directory) and covers the last `days` days.
+export function defaultPeriod(today, days) {
+  if (!hasDate(today)) return { from: '', to: '' };
+  return { from: new Date((dayNumber(today) - (days - 1)) * DAY).toISOString().slice(0, 10), to: today };
+}
+
+export function periodError(from, to) {
+  if (!hasDate(from) || !hasDate(to)) return 'Период: даты в формате ГГГГ-ММ-ДД.';
+  if (dateError(from) || dateError(to)) return 'Период: такой даты нет.';
+  if (from > to) return 'Начало периода позже конца.';
+  if (dayNumber(to) - dayNumber(from) >= MAX_PERIOD_DAYS) return `Период не длиннее ${MAX_PERIOD_DAYS} дней.`;
+  return '';
+}
+
 export class Api {
   constructor(fetchImpl, onAuthLost = () => {}) {
     this.fetch = fetchImpl;
@@ -305,6 +329,7 @@ export class Api {
   removeDependency(id, version, reason) { return this.request('POST', `/api/v1/dependencies/${id}/remove`, { expected_version: version, reason }, true); }
   riskLinks(id) { return this.request('GET', `/api/v1/risks/${id}/links`); }
   linkRiskTask(riskId, taskId, linked) { return this.request('PUT', `/api/v1/risks/${riskId}/tasks/${taskId}`, { linked }, true); }
+  metrics(ws, from, to) { return this.request('GET', `/api/v1/workspaces/${ws}/metrics?${new URLSearchParams({ from, to })}`); }
   snapshot(ws, includeSubtasks) { return this.request('GET', `/api/v1/workspaces/${ws}/snapshot?include_subtasks=${includeSubtasks ? 'true' : 'false'}`); }
   addComment(id, body) { return this.request('POST', `/api/v1/tasks/${id}/comments`, { body }, true); }
 }

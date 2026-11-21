@@ -5,7 +5,7 @@ authentication routes. Service errors map to 403, 404 (identical for hidden and 
 """
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from backend.auth_http import COOKIE, credentials
@@ -98,6 +98,12 @@ def list_tasks(workspace_id: str, request: Request, status: str | None = None, l
 @router.get('/workspaces/{workspace_id}/snapshot')
 def snapshot(workspace_id: str, request: Request, include_subtasks: bool = False):
     return work(request).snapshot(token(request), workspace_id, include_subtasks=include_subtasks)
+
+
+@router.get('/workspaces/{workspace_id}/metrics')
+def metrics(workspace_id: str, request: Request, date_from: str = Query(alias='from', max_length=10),
+            date_to: str = Query(alias='to', max_length=10)):
+    return work(request).metrics(token(request), workspace_id, date_from, date_to)
 
 
 @router.post('/workspaces/{workspace_id}/tasks')

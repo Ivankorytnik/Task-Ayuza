@@ -1,11 +1,11 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const state = { user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null, risks: [], snap: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() };
+  blockers: [], deps: null, risks: [], snap: null, period: { from: '', to: '' }, metrics: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() };
 const api = new Api((...args) => fetch(...args), () => { state.user = null; state.phase = 'login'; render(); });
 let pendingKey = null;                                  // one client_key per creation attempt, kept until it succeeds
 
@@ -256,6 +256,28 @@ function snapshotView() {
     h('label', { class: 'muted' }, h('input', { type: 'checkbox', checked: state.subs, on: { change: async (e) => { state.subs = e.target.checked; await loadSnapshot(); render(); } } }), ' включать подзадачи'));
 }
 
+async function loadMetrics() {
+  if (!state.ws) return;
+  const bad = periodError(state.period.from, state.period.to);
+  if (bad) { state.metrics = null; state.error = bad; return; }
+  try { state.metrics = await api.metrics(state.ws, state.period.from, state.period.to); state.error = ''; } catch (error) { state.metrics = null; state.error = error.message; }
+}
+
+function metricsView() {
+  if (!state.dir) return '';
+  if (!state.period.from) state.period = defaultPeriod(state.dir.today, 30);
+  const form = h('form', { class: 'card snap', on: { submit: async (e) => {
+    e.preventDefault();
+    const data = new FormData(form); state.period = { from: String(data.get('from')).trim(), to: String(data.get('to')).trim() };
+    await loadMetrics(); render();
+  } } },
+  h('strong', {}, 'За период'),
+  h('input', { name: 'from', value: state.period.from, maxlength: 10, 'aria-label': 'С' }), h('input', { name: 'to', value: state.period.to, maxlength: 10, 'aria-label': 'По' }),
+  h('button', { type: 'submit' }, 'Показать'),
+  state.metrics ? METRIC_LABELS.map(([key, text]) => h('span', { class: 'snapitem' }, `${text}: `, h('strong', {}, String(state.metrics[key])))) : '');
+  return form;
+}
+
 function ganttView() {
   const g = ganttRows(state.tasks);
   const today = state.dir ? state.dir.today : '';
@@ -366,7 +388,7 @@ function mainView() {
   const messages = [h('div', { class: 'error', role: 'alert' }, state.error), h('div', { class: 'ok' }, state.message)];
   if (state.view === 'notes') return [tabs, messages, notesView()];
   if (state.view === 'risks') return [tabs, messages, risksView(), h('p', { class: 'muted' }, state.release)];
-  return [bar, filters, tabs, messages, snapshotView(), state.dir ? createView() : '', h('div', { class: 'bar' }, h('button', { on: { click: () => exportTasks('csv') } }, 'Выгрузить CSV'),
+  return [bar, filters, tabs, messages, snapshotView(), metricsView(), state.dir ? createView() : '', h('div', { class: 'bar' }, h('button', { on: { click: () => exportTasks('csv') } }, 'Выгрузить CSV'),
       h('button', { on: { click: () => exportTasks('json') } }, 'Выгрузить JSON')),
     state.view === 'board' ? boardView() : state.view === 'gantt' ? ganttView() : state.view === 'calendar' ? calendarView() : table,
     state.more ? h('button', { on: { click: async () => { await loadTasks(false); } } }, 'Показать ещё') : '',
