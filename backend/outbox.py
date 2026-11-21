@@ -5,11 +5,11 @@ import uuid
 
 from backend.auth import execute
 
-EVENT_TYPES = ('task_assigned', 'comment_added', 'blocker_resolved', 'dependency_changed')
+EVENT_TYPES = ('task_assigned', 'comment_added', 'blocker_resolved', 'dependency_changed', 'task_due_soon', 'task_overdue')
 
 
 def enqueue(c, *, actor_id, task, event_type, source_id, source_key, recipients) -> int:
-    """One row per recipient. The actor is never notified. Repeating the same source is a no-op (dedupe_key)."""
+    """One row per recipient. The actor (None for a system reminder) is never notified. Repeating the same source is a no-op (dedupe_key)."""
     assert event_type in EVENT_TYPES
     queued = 0
     for recipient in sorted({r for r in recipients if r is not None and r != actor_id}, key=str):

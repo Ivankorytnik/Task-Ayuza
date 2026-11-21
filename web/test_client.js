@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -218,6 +218,12 @@ await test('service worker caches only GET shell files and never /api', async ()
   assert.equal(await run('https://other.test/app/app.js'), false);
   assert.equal(await run('https://x.test/other'), false);
   assert.deepEqual(puts, ['https://x.test/app/app.js']);
+});
+
+await test('every notification type has a label', () => {
+  for (const type of ['task_assigned', 'comment_added', 'blocker_resolved', 'dependency_changed', 'task_due_soon', 'task_overdue']) {
+    assert.ok(EVENTS[type], type);
+  }
 });
 
 console.log(`${passed} passed`);

@@ -87,7 +87,7 @@ def main():
                     return subprocess.run([sys.executable, '-m', 'alembic', *params],
                         env=migration_env, check=True, capture_output=True, text=True)
                 heads = alembic('heads').stdout.strip()
-                assert heads == '0011_m04_exports (head)'
+                assert heads == '0012_m08_reminders (head)'
                 alembic('upgrade', 'head')
                 engine = create_engine(urls['migrator'], hide_parameters=True)
                 def snapshot():
@@ -106,7 +106,7 @@ def main():
                 assert tables_now == ['administrative_grants', 'alembic_version', 'audit_events', 'auth_limit_events', 'blocker_events', 'blockers', 'checklist_items', 'comment_revisions', 'comments', 'export_events', 'idempotency_requests', 'labels', 'login_attempts', 'mfa_backup_codes', 'notifications', 'organization', 'outbox_events', 'prelogin_limits', 'project_labels', 'project_members', 'project_stages', 'projects', 'releases', 'risk_blocker_links', 'risk_checks', 'risk_register', 'risk_task_links', 'sessions', 'setup_state', 'system_role_assignments', 'task_access_grants', 'task_dependencies', 'task_events', 'task_labels', 'tasks', 'team_members', 'teams', 'user_mfa', 'users', 'workspace_members', 'workspace_team_access', 'workspace_teams', 'workspaces']
                 assert counts_now == [1 if t == 'alembic_version' else 0 for t in tables_now]
                 with engine.connect() as c:
-                    assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0011_m04_exports'
+                    assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0012_m08_reminders'
                     drift = compare_metadata(MigrationContext.configure(c, opts={'include_schemas': True, 'version_table_schema': 'task_ayuza'}), Base.metadata)
                     assert drift == [], repr(drift)[:3000]
                 conn.execute(Path('scripts/grant-test.sql').read_text())
@@ -175,7 +175,7 @@ def main():
                 runtime.dispose()
                 test_env = dict(env, TASK_AYUZA_DATABASE_URL=urls['runtime'],
                     TASK_AYUZA_TEST_RUNTIME_URL=urls['runtime'], TASK_AYUZA_TEST_BACKUP_URL=urls['backup'], TASK_AYUZA_TEST_MIGRATOR_URL=urls['migrator'], TASK_AYUZA_ORIGIN='https://test.local', TASK_AYUZA_AUTH_HMAC_KEY=secrets.token_hex(32), TASK_AYUZA_OUTBOX_INTERVAL='0', TASK_AYUZA_MFA_KEY=secrets.token_hex(32))
-                subprocess.run([sys.executable, '-m', 'pytest', '-q', '-s', 'tests/test_m01_foundation.py', 'tests/test_m01_auth.py', 'tests/test_m01_acl.py', 'tests/test_m01_mfa_grants.py', 'tests/test_m02_work.py', 'tests/test_m02_items.py', 'tests/test_m02_events.py', 'tests/test_m03_links.py', 'tests/test_m04_notifications.py', 'tests/test_m04_risks.py', 'tests/test_m04_exports.py', 'tests/test_m05_api.py', 'tests/test_m05_api_items.py', 'tests/test_m05_api_ops.py', 'tests/test_m06_directory.py', 'tests/test_m06_web.py', 'tests/test_m07_scheduler.py', 'tests/test_m07_load.py', '--tb=short'], env=test_env, check=True)
+                subprocess.run([sys.executable, '-m', 'pytest', '-q', '-s', 'tests/test_m01_foundation.py', 'tests/test_m01_auth.py', 'tests/test_m01_acl.py', 'tests/test_m01_mfa_grants.py', 'tests/test_m02_work.py', 'tests/test_m02_items.py', 'tests/test_m02_events.py', 'tests/test_m03_links.py', 'tests/test_m04_notifications.py', 'tests/test_m04_risks.py', 'tests/test_m04_exports.py', 'tests/test_m05_api.py', 'tests/test_m05_api_items.py', 'tests/test_m05_api_ops.py', 'tests/test_m06_directory.py', 'tests/test_m06_web.py', 'tests/test_m07_scheduler.py', 'tests/test_m07_load.py', 'tests/test_m08_reminders.py', '--tb=short'], env=test_env, check=True)
                 engine.dispose()
                 print('A04-A09 PASS: effective ACL and integration suite; no skipped tests', flush=True)
         finally:
