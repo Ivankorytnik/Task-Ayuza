@@ -192,4 +192,32 @@ await test('calendar month grid is Monday based and holds due tasks', () => {
   assert.deepEqual(shiftMonth(2026, 0, -1), { year: 2025, month: 11 });
 });
 
+await test('offline: network failure becomes ApiError 0 with a clear message', async () => {
+  const api = new Api(async () => { throw new TypeError('Failed to fetch'); });
+  await assert.rejects(() => api.me(), (e) => e.status === 0 && /Нет связи/.test(e.message));
+});
+
+await test('service worker caches only GET shell files and never /api', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./sw.js', import.meta.url), 'utf8');
+  const listeners = {}; const puts = [];
+  const self = { location: { origin: 'https://x.test' }, addEventListener: (t, f) => { listeners[t] = f; }, skipWaiting: () => {}, clients: { claim: () => {} } };
+  const caches = { open: async () => ({ put: (r) => puts.push(r.url), addAll: async () => {} }), match: async () => null, keys: async () => [], delete: async () => true };
+  const fetchStub = async () => ({ ok: true, clone() { return this; } });
+  new Function('self', 'caches', 'fetch', 'URL', source)(self, caches, fetchStub, URL);
+  const run = async (url, method = 'GET') => {
+    let handled = false;
+    const request = { url, method };
+    listeners.fetch({ request, respondWith: (p) => { handled = true; return p; } });
+    await new Promise((r) => setTimeout(r, 5));
+    return handled;
+  };
+  assert.equal(await run('https://x.test/app/app.js'), true);
+  assert.equal(await run('https://x.test/api/v1/tasks'), false);
+  assert.equal(await run('https://x.test/app/app.js', 'POST'), false);
+  assert.equal(await run('https://other.test/app/app.js'), false);
+  assert.equal(await run('https://x.test/other'), false);
+  assert.deepEqual(puts, ['https://x.test/app/app.js']);
+});
+
 console.log(`${passed} passed`);
