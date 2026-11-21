@@ -60,3 +60,11 @@ def test_n03_client_views_use_api_only():
     for path in ('/api/v1/notifications', '/api/v1/tasks/${id}/blockers', '/api/v1/tasks/${id}/dependencies'):
         assert path in logic, path
     assert app.count('fetch(') == 1                                         # one injection point into Api, no direct calls
+
+
+def test_n04_risk_and_export_views():
+    app = (WEB_DIR / 'app.js').read_text(encoding='utf-8')
+    logic = (WEB_DIR / 'logic.js').read_text(encoding='utf-8')
+    assert 'risksView' in app and 'exportTasks' in app and 'riskCard' in app
+    assert '/api/v1/risks' in logic and '/exports' in logic and '/api/v1/release' in logic
+    assert 'Blob' in app and 'createObjectURL' in app                        # the export is saved locally, never kept in storage
