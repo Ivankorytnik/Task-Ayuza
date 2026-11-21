@@ -70,7 +70,7 @@ jobs:
         env:
           TASK_AYUZA_DATABASE_URL: postgresql+psycopg://task_ayuza_runtime:ci-runtime-synthetic@127.0.0.1:5432/task_ayuza_test
           TASK_AYUZA_ORIGIN: https://localhost:8443
-          TASK_AYUZA_AUTH_HMAC_KEY: 0000000000000000000000000000000000000000000000000000000000000001
+          TASK_AYUZA_AUTH_HMAC_KEY: 'a0000000000000000000000000000000000000000000000000000000000000b1'
         run: |
           python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
           ok=0
