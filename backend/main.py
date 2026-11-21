@@ -6,10 +6,13 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from backend.acl import AclError
+from backend.api_work import router as work_router
 from backend.auth import AuthError, AuthService
 from backend.auth_http import configured_origin, router
 from backend.config import ConfigurationError
 from backend.db import make_engine, verify_schema
+from backend.exports import ExportsService
 
 
 @asynccontextmanager
@@ -25,6 +28,7 @@ async def lifespan(app: FastAPI):
         except ValueError:
             raise ConfigurationError('Authentication key is not configured correctly') from None
         app.state.auth = AuthService(engine,key)
+        app.state.work = ExportsService(app.state.auth)
         app.state.auth_origin = origin
         yield
     finally:
@@ -33,6 +37,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title='Task-Ayuza',lifespan=lifespan,debug=False)
 app.include_router(router)
+app.include_router(work_router)
 
 
 @app.middleware('http')
@@ -48,6 +53,11 @@ async def no_store(request: Request,call_next):
 
 @app.exception_handler(AuthError)
 async def auth_error(request,error):
+    return JSONResponse({'detail':error.message},status_code=error.status)
+
+
+@app.exception_handler(AclError)
+async def acl_error(request,error):
     return JSONResponse({'detail':error.message},status_code=error.status)
 
 
