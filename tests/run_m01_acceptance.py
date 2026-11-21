@@ -107,7 +107,8 @@ def main():
                 assert counts_now == [1 if t == 'alembic_version' else 0 for t in tables_now]
                 with engine.connect() as c:
                     assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0006_m02_items'
-                    assert compare_metadata(MigrationContext.configure(c, opts={'include_schemas': True, 'version_table_schema': 'task_ayuza'}), Base.metadata) == []
+                    drift = compare_metadata(MigrationContext.configure(c, opts={'include_schemas': True, 'version_table_schema': 'task_ayuza'}), Base.metadata)
+                    assert drift == [], repr(drift)[:3000]
                 conn.execute(Path('scripts/grant-test.sql').read_text())
                 print('A01 PASS: one head (0006); empty tables; repeated upgrade unchanged; metadata matches', flush=True)
 
