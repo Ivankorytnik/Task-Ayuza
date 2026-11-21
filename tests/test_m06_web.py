@@ -49,3 +49,14 @@ def test_n02_client_sources_are_safe():
         assert not re.search(r'https?://', text), path.name                         # no external hosts
     assert (WEB_DIR / 'package.json').read_text() == '{"type":"module"}\n'
     assert 'COPY web web' in (Path(WEB_DIR).parent / 'Dockerfile').read_text()
+
+
+def test_n03_client_views_use_api_only():
+    app = (WEB_DIR / 'app.js').read_text(encoding='utf-8')
+    logic = (WEB_DIR / 'logic.js').read_text(encoding='utf-8')
+    assert 'boardView' in app and 'notesView' in app and 'blockersView' in app
+    assert 'draggable' in app and 'dragover' in app                       # Kanban moves go through Api.updateTask with a version
+    assert 'api.updateTask(id, version, { status: to })' in app
+    for path in ('/api/v1/notifications', '/api/v1/tasks/${id}/blockers', '/api/v1/tasks/${id}/dependencies'):
+        assert path in logic, path
+    assert 'fetch(' not in app                                              # only the Api class talks to the network

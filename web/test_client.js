@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { Api, ApiError, PAGE, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -100,6 +100,39 @@ await test('requests: pagination, filters, optimistic version', async () => {
   assert.equal(f.calls[1].path, `/api/v1/workspaces/w1/tasks?limit=${PAGE}`);
   assert.equal(f.calls[2].init.method, 'PATCH');
   assert.deepEqual(JSON.parse(f.calls[2].init.body), { expected_version: 7, changes: { title: 'N' } });
+});
+
+await test('status transitions follow D04', () => {
+  assert.equal(transitionAllowed('new', 'blocked'), true);
+  assert.equal(transitionAllowed('in_progress', 'done'), true);
+  assert.equal(transitionAllowed('done', 'cancelled'), false);
+  assert.equal(transitionAllowed('cancelled', 'done'), false);
+  assert.equal(transitionAllowed('done', 'in_progress'), true);
+  assert.deepEqual(allowedTargets('done'), ['new', 'planned', 'in_progress']);
+  assert.equal(allowedTargets('new').includes('new'), false);
+  assert.equal(allowedTargets('new').length, 5);
+});
+
+await test('kanban columns keep order and unknown statuses are ignored', () => {
+  const cols = columns([{ id: 1, status: 'done' }, { id: 2, status: 'new' }, { id: 3, status: 'new' }, { id: 4, status: 'weird' }]);
+  assert.deepEqual(cols.map((c) => c.key), ['new', 'planned', 'in_progress', 'blocked', 'done', 'cancelled']);
+  assert.deepEqual(cols[0].tasks.map((t) => t.id), [2, 3]);
+  assert.equal(cols.reduce((n, c) => n + c.tasks.length, 0), 3);
+});
+
+await test('notifications and blockers helpers', async () => {
+  assert.equal(unread([{ read_at: null }, { read_at: '2026-01-01' }, {}]), 2);
+  assert.deepEqual(blockerPayload({ title: ' Ждём ', responsible: 'u1', due_date: '' }), { title: 'Ждём', responsible_user_id: 'u1' });
+  assert.deepEqual(blockerPayload({ title: 'a', responsible: '', due_date: '2026-12-20' }), { title: 'a', expected_resolution_date: '2026-12-20' });
+  const f = fakeFetch([]);
+  const api = new Api(f);
+  await api.notifications(true); await api.unreadCount(); await api.markRead('n1'); await api.blockers('t1');
+  await api.createBlocker('t1', { title: 'x' }); await api.dependencies('t1');
+  assert.deepEqual(f.calls.map((c) => c.init.method + ' ' + c.path), [
+    'GET /api/v1/notifications?limit=100&unread_only=true', 'GET /api/v1/notifications/unread-count',
+    'POST /api/v1/notifications/n1/read', 'GET /api/v1/tasks/t1/blockers', 'POST /api/v1/tasks/t1/blockers',
+    'GET /api/v1/tasks/t1/dependencies']);
+  assert.equal(f.calls[2].init.headers['X-CSRF-Token'], undefined);   // no token yet: the server would answer 403
 });
 
 console.log(`${passed} passed`);

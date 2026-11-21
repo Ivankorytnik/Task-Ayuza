@@ -1,10 +1,11 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { Api, ApiError, PAGE, PRIORITIES, STATUSES, createPayload, dateError, diffChanges, label, newClientKey,
-  titleError } from './logic.js';
+import { Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+  dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const state = { user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
-  more: false, selected: null, comments: [], message: '', error: '' };
+  more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
+  blockers: [], deps: null };
 const api = new Api((...args) => fetch(...args), () => { state.user = null; state.phase = 'login'; render(); });
 let pendingKey = null;                                  // one client_key per creation attempt, kept until it succeeds
 
@@ -144,6 +145,63 @@ function detailView() {
   return [form, comment];
 }
 
+async function move(id, version, to) {
+  try { await api.updateTask(id, version, { status: to }); state.error = ''; await loadTasks(true); if (state.selected && state.selected.id === id) await openTask(id); }
+  catch (error) { if (error.status === 409) await loadTasks(true); fail(error); }
+}
+
+function boardView() {
+  return h('div', { class: 'board' }, columns(state.tasks).map((col) => h('section', { class: 'col', 'data-status': col.key,
+    on: { dragover: (e) => e.preventDefault(), drop: (e) => {
+      e.preventDefault();
+      const task = state.tasks.find((t) => t.id === e.dataTransfer.getData('text/plain'));
+      if (task && task.status !== col.key) move(task.id, task.version, col.key);
+    } } },
+  h('h3', {}, `${col.text} (${col.tasks.length})`),
+  col.tasks.map((task) => h('article', { class: 'tcard', draggable: true,
+    on: { dragstart: (e) => e.dataTransfer.setData('text/plain', task.id) } },
+  h('div', { class: 'ttitle', on: { click: () => openTask(task.id) } }, task.title),
+  h('div', { class: 'muted' }, task.due_date || ''),
+  h('select', { 'aria-label': 'Перенести в статус', on: { change: (e) => { if (e.target.value) move(task.id, task.version, e.target.value); } } },
+    [h('option', { value: '' }, 'Перенести…'), ...allowedTargets(task.status).map((to) => h('option', { value: to }, label(STATUSES, to)))]))))));
+}
+
+function notesView() {
+  return h('div', {}, h('div', { class: 'bar' }, h('button', { on: { click: loadNotes } }, 'Обновить')),
+    state.notes.length ? '' : h('p', { class: 'muted' }, 'Уведомлений нет.'),
+    state.notes.map((n) => h('div', { class: 'card note' },
+      h('strong', {}, EVENTS[n.event_type] || 'Событие'), h('span', { class: 'muted' }, ` ${n.created_at || ''}`),
+      h('div', { class: 'bar' },
+        h('button', { on: { click: async () => { state.view = 'list'; await openTask(n.task_id); } } }, 'Открыть задачу'),
+        n.read_at ? h('span', { class: 'muted' }, 'Прочитано')
+          : h('button', { on: { click: async () => { try { await api.markRead(n.id); await loadNotes(); } catch (error) { fail(error); } } } }, 'Отметить прочитанным')))));
+}
+
+function blockersView() {
+  const task = state.selected;
+  const form = h('form', { class: 'card', on: { submit: async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(form).entries());
+    const problem = titleError(data.title) || dateError(data.due_date);
+    if (problem) { state.error = problem; return render(); }
+    try { await api.createBlocker(task.id, blockerPayload(data)); state.error = ''; await openTask(task.id); }
+    catch (error) { fail(error); }
+  } } },
+  h('h3', {}, 'Блокеры и зависимости'),
+  state.blockers.length ? '' : h('p', { class: 'muted' }, 'Блокеров нет.'),
+  state.blockers.map((b) => h('div', { class: 'comment' }, h('strong', {}, b.title), ` · ${b.status === 'resolved' ? 'снят' : 'активен'}`,
+    b.expected_resolution_date ? h('div', { class: 'muted' }, `Ожидаемый срок: ${b.expected_resolution_date}`) : '')),
+  state.deps ? [state.deps.edges.map((e) => h('div', { class: 'comment' }, e.direction === 'blocked_by' ? 'Зависит от: ' : 'Блокирует: ', e.title, ` (${label(STATUSES, e.status)})`)),
+    state.deps.hidden_external ? h('div', { class: 'muted' }, `Скрытых внешних зависимостей: ${state.deps.hidden_external}`) : ''] : '',
+  h('label', { for: 'btitle' }, 'Новый блокер'), h('input', { id: 'btitle', name: 'title', maxlength: 200, required: true }),
+  h('div', { class: 'bar' },
+    h('div', {}, h('label', { for: 'bresp' }, 'Ответственный'),
+      h('select', { id: 'bresp', name: 'responsible' }, (state.dir ? state.dir.members : []).map((m) => h('option', { value: m.user_id, selected: m.user_id === state.user.id }, m.display_name)))),
+    h('div', {}, h('label', { for: 'bdue' }, 'Ожидаемый срок'), h('input', { id: 'bdue', name: 'due_date', placeholder: '2026-12-31', maxlength: 10 }))),
+  h('button', { type: 'submit' }, 'Добавить блокер'));
+  return form;
+}
+
 function mainView() {
   const bar = h('div', { class: 'bar' },
     h('label', { for: 'ws' }, 'Пространство'),
@@ -151,12 +209,18 @@ function mainView() {
       state.workspaces.map((w) => h('option', { value: w.id, selected: w.id === state.ws }, w.name))),
     h('label', { for: 'st' }, 'Статус'),
     h('select', { id: 'st', on: { change: async (e) => { state.status = e.target.value; await loadTasks(true); } } }, options(STATUSES, state.status, 'Все')));
+  const tabs = h('div', { class: 'bar' }, [['list', 'Список'], ['board', 'Kanban'], ['notes', `Уведомления${state.unread ? ` (${state.unread})` : ''}`]]
+    .map(([key, text]) => h('button', { class: state.view === key ? 'primary' : '', on: { click: async () => {
+      state.view = key; state.error = ''; state.message = '';
+      if (key === 'notes') await loadNotes(); else await loadTasks(true);
+    } } }, text)));
   const table = h('table', {}, h('thead', {}, h('tr', {}, ['Название', 'Статус', 'Приоритет', 'Срок'].map((t) => h('th', {}, t)))),
     h('tbody', {}, state.tasks.map(taskRow)));
-  return [bar, h('div', { class: 'error', role: 'alert' }, state.error), h('div', { class: 'ok' }, state.message),
-    state.dir ? createView() : '', table,
+  const messages = [h('div', { class: 'error', role: 'alert' }, state.error), h('div', { class: 'ok' }, state.message)];
+  if (state.view === 'notes') return [tabs, messages, notesView()];
+  return [bar, tabs, messages, state.dir ? createView() : '', state.view === 'board' ? boardView() : table,
     state.more ? h('button', { on: { click: async () => { await loadTasks(false); } } }, 'Показать ещё') : '',
-    state.selected ? detailView() : ''];
+    state.selected ? [detailView(), blockersView()] : ''];
 }
 
 function render() {
@@ -175,7 +239,7 @@ async function loadDirectory() { state.dir = state.ws ? await api.directory(stat
 async function loadTasks(reset) {
   try {
     const after = !reset && state.tasks.length ? state.tasks[state.tasks.length - 1].id : null;
-    const page = await api.tasks(state.ws, state.status, after);
+    const page = await api.tasks(state.ws, state.view === 'list' ? state.status : '', after);
     state.tasks = reset ? page : state.tasks.concat(page);
     state.more = page.length === PAGE;
   } catch (error) { state.tasks = []; state.more = false; state.error = error.message; }
@@ -183,9 +247,23 @@ async function loadTasks(reset) {
 }
 
 async function openTask(id) {
-  try { state.selected = await api.task(id); state.comments = await api.comments(id); }
+  try {
+    state.selected = await api.task(id); state.comments = await api.comments(id);
+    state.blockers = await api.blockers(id); state.deps = await api.dependencies(id);
+  }
   catch (error) { state.selected = null; state.error = error.message; }
   render();
+}
+
+async function loadNotes() {
+  try { state.notes = await api.notifications(false); state.unread = unread(state.notes); state.error = ''; }
+  catch (error) { state.error = error.message; }
+  render();
+}
+
+async function refreshUnread() {
+  if (!state.user) return;
+  try { const r = await api.unreadCount(); if (r.count !== state.unread) { state.unread = r.count; render(); } } catch { /* shown on the next action */ }
 }
 
 async function enter() {
@@ -202,4 +280,5 @@ async function start() {
   catch { state.user = null; state.phase = 'login'; render(); }
 }
 
+setInterval(refreshUnread, 60000);                      // polling instead of push; no storage involved
 start();
