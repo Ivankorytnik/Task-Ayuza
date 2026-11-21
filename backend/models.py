@@ -1,10 +1,10 @@
-"""M01.1 foundation and M01.2 auth metadata. No ACL/project/task tables."""
+"""M01.1 foundation, M01.2 auth and M01.3 ACL metadata. No project/task tables."""
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Index, String, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -37,7 +37,13 @@ class AuditEvent(Base):
         CheckConstraint(
             "(entity_kind = 'organization' AND action IN ('organization.created','organization.updated')) OR "
             "(entity_kind = 'user' AND action IN ('auth.user_created','auth.password_reset','auth.password_changed','auth.deactivated','auth.login_failed','auth.login_limited','auth.login','auth.logout','auth.renewed')) OR "
-            "(entity_kind = 'session' AND action IN ('auth.login_failed','auth.login_limited'))",
+            "(entity_kind = 'session' AND action IN ('auth.login_failed','auth.login_limited')) OR "
+            "(entity_kind = 'workspace' AND action = 'acl.workspace_created') OR "
+            "(entity_kind = 'team' AND action = 'acl.team_created') OR "
+            "(entity_kind = 'workspace_member' AND action IN ('acl.workspace_member_added','acl.workspace_member_changed')) OR "
+            "(entity_kind = 'team_member' AND action IN ('acl.team_member_added','acl.team_member_changed')) OR "
+            "(entity_kind = 'workspace_team' AND action IN ('acl.workspace_team_added','acl.workspace_team_changed')) OR "
+            "(entity_kind = 'workspace_team_access' AND action IN ('acl.team_access_granted','acl.team_access_revoked'))",
             name="ck_audit_scope_m01",
         ),
         CheckConstraint(
@@ -64,7 +70,7 @@ class AuditEvent(Base):
     actor_kind: Mapped[str] = mapped_column(String(10), nullable=False)
     actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    workspace_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.workspaces.id", name="fk_audit_events_workspace"))
     entity_kind: Mapped[str] = mapped_column(String(40), nullable=False)
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     action: Mapped[str] = mapped_column(String(60), nullable=False)
@@ -76,7 +82,7 @@ class AuditEvent(Base):
 
 
 # Core tables used by the auth service. Explicit metadata, never create_all on startup.
-from sqlalchemy import Table, Column, ForeignKey, BigInteger, Boolean, LargeBinary, Text, UniqueConstraint
+from sqlalchemy import Table, Column, BigInteger, Boolean, ForeignKeyConstraint, LargeBinary, Text, UniqueConstraint
 
 Users = Table('users', Base.metadata,
     Column('id',UUID(as_uuid=True),primary_key=True),
@@ -131,3 +137,88 @@ LoginAttempts = Table('login_attempts',Base.metadata,
     CheckConstraint('octet_length(login_key)=32'),CheckConstraint('octet_length(ip_key)=32'),
     Index('ix_attempts_login','login_key','attempted_at'),Index('ix_attempts_ip','ip_key','attempted_at'),
     Index('ix_attempts_time','attempted_at'),schema=SCHEMA)
+
+
+# M01.3 ACL tables. CHECK/trigger details live in migration 0003_m01_acl.
+def _stamp():
+    return [Column('version',BigInteger,nullable=False,server_default=text('1')),
+            Column('created_at',DateTime(timezone=True),nullable=False,server_default=text('now()')),
+            Column('updated_at',DateTime(timezone=True),nullable=False,server_default=text('now()'))]
+
+Workspaces = Table('workspaces',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('organization_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.organization.id'),nullable=False),
+    Column('name',String(200),nullable=False),
+    Column('timezone',String(64),nullable=False),
+    *_stamp(),
+    Column('archived_at',DateTime(timezone=True)),
+    CheckConstraint('length(name) BETWEEN 1 AND 200 AND btrim(name) <> \'\'',name='ck_workspaces_name'),
+    CheckConstraint('version >= 1',name='ck_workspaces_version'),schema=SCHEMA)
+Teams = Table('teams',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('organization_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.organization.id'),nullable=False),
+    Column('name',String(200),nullable=False),
+    Column('active',Boolean,nullable=False,server_default=text('true')),
+    *_stamp(),
+    CheckConstraint('length(name) BETWEEN 1 AND 200 AND btrim(name) <> \'\'',name='ck_teams_name'),
+    CheckConstraint('version >= 1',name='ck_teams_version'),schema=SCHEMA)
+WorkspaceMembers = Table('workspace_members',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('workspace_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.workspaces.id'),nullable=False),
+    Column('user_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id'),nullable=False),
+    Column('role',String(20),nullable=False),
+    Column('active',Boolean,nullable=False,server_default=text('true')),
+    *_stamp(),
+    UniqueConstraint('workspace_id','user_id',name='uq_workspace_members_pair'),
+    CheckConstraint("role IN ('participant','observer','workspace_admin')",name='ck_workspace_members_role'),
+    CheckConstraint('version >= 1',name='ck_workspace_members_version'),
+    Index('ix_workspace_members_user','user_id'),schema=SCHEMA)
+TeamMembers = Table('team_members',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('team_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.teams.id'),nullable=False),
+    Column('user_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id'),nullable=False),
+    Column('active',Boolean,nullable=False,server_default=text('true')),
+    *_stamp(),
+    UniqueConstraint('team_id','user_id',name='uq_team_members_pair'),
+    CheckConstraint('version >= 1',name='ck_team_members_version'),
+    Index('ix_team_members_user','user_id'),schema=SCHEMA)
+WorkspaceTeams = Table('workspace_teams',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('workspace_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.workspaces.id'),nullable=False),
+    Column('team_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.teams.id'),nullable=False),
+    Column('active',Boolean,nullable=False,server_default=text('true')),
+    *_stamp(),
+    UniqueConstraint('workspace_id','team_id',name='uq_workspace_teams_pair'),
+    CheckConstraint('version >= 1',name='ck_workspace_teams_version'),
+    Index('ix_workspace_teams_team','team_id'),schema=SCHEMA)
+WorkspaceTeamAccess = Table('workspace_team_access',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('workspace_id',UUID(as_uuid=True),nullable=False),
+    Column('team_id',UUID(as_uuid=True),nullable=False),
+    Column('user_id',UUID(as_uuid=True),nullable=False),
+    Column('capability',String(20),nullable=False),
+    Column('granted_by',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id'),nullable=False),
+    Column('reason',String(500),nullable=False),
+    Column('granted_at',DateTime(timezone=True),nullable=False,server_default=text('now()')),
+    Column('revoked_at',DateTime(timezone=True)),
+    Column('version',BigInteger,nullable=False,server_default=text('1')),
+    UniqueConstraint('workspace_id','team_id','user_id','capability',name='uq_workspace_team_access'),
+    ForeignKeyConstraint(['workspace_id','team_id'],[f'{SCHEMA}.workspace_teams.workspace_id',f'{SCHEMA}.workspace_teams.team_id'],name='fk_wta_workspace_team'),
+    ForeignKeyConstraint(['team_id','user_id'],[f'{SCHEMA}.team_members.team_id',f'{SCHEMA}.team_members.user_id'],name='fk_wta_team_member'),
+    ForeignKeyConstraint(['workspace_id','user_id'],[f'{SCHEMA}.workspace_members.workspace_id',f'{SCHEMA}.workspace_members.user_id'],name='fk_wta_workspace_member'),
+    CheckConstraint('granted_by <> user_id',name='ck_wta_no_self_grant'),
+    CheckConstraint('version >= 1',name='ck_wta_version'),
+    Index('ix_wta_user','user_id'),schema=SCHEMA)
+SystemRoleAssignments = Table('system_role_assignments',Base.metadata,
+    Column('id',UUID(as_uuid=True),primary_key=True),
+    Column('user_id',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id'),nullable=False),
+    Column('role_code',String(20),nullable=False),
+    Column('granted_by',UUID(as_uuid=True),ForeignKey(f'{SCHEMA}.users.id')),
+    Column('reason',String(500),nullable=False),
+    Column('granted_at',DateTime(timezone=True),nullable=False,server_default=text('now()')),
+    Column('revoked_at',DateTime(timezone=True)),
+    Column('version',BigInteger,nullable=False,server_default=text('1')),
+    UniqueConstraint('user_id','role_code',name='uq_system_role_user_role'),
+    CheckConstraint("role_code IN ('system_admin','risk_controller')",name='ck_system_role_code'),
+    CheckConstraint('granted_by IS NULL OR granted_by <> user_id',name='ck_system_role_no_self_grant'),
+    CheckConstraint('version >= 1',name='ck_system_role_version'),schema=SCHEMA)

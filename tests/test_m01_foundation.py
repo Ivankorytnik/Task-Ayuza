@@ -107,7 +107,8 @@ def test_a02_schema_check_is_read_only(runtime_engine):
     inspector = inspect(runtime_engine)
     assert set(inspector.get_table_names(schema="task_ayuza")) == {
         "organization", "audit_events", "alembic_version", "users", "sessions", "login_attempts",
-        "prelogin_limits", "auth_limit_events"
+        "prelogin_limits", "auth_limit_events", "workspaces", "teams", "workspace_members",
+        "team_members", "workspace_teams", "workspace_team_access", "system_role_assignments"
     }
     with runtime_engine.connect() as connection:
         before = [connection.execute(text(f"SELECT count(*) FROM task_ayuza.{table}")).scalar_one()
