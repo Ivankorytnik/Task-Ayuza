@@ -26,3 +26,12 @@ GRANT SELECT ON task_ayuza.system_role_assignments TO task_ayuza_runtime;
 GRANT SELECT ON task_ayuza.workspaces, task_ayuza.teams, task_ayuza.workspace_members,
     task_ayuza.team_members, task_ayuza.workspace_teams, task_ayuza.workspace_team_access,
     task_ayuza.system_role_assignments TO task_ayuza_backup;
+
+-- M01.4. Runtime holds no DDL/DELETE/TRUNCATE. setup_state is read-only for runtime: the one-time
+-- first setup is a separate privileged procedure (migration role contour), not an application path.
+GRANT SELECT, INSERT, UPDATE ON task_ayuza.user_mfa, task_ayuza.mfa_backup_codes,
+    task_ayuza.administrative_grants TO task_ayuza_runtime;
+GRANT INSERT, UPDATE ON task_ayuza.system_role_assignments TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.setup_state TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.user_mfa, task_ayuza.mfa_backup_codes, task_ayuza.administrative_grants,
+    task_ayuza.setup_state TO task_ayuza_backup;
