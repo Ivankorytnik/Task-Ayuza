@@ -88,7 +88,7 @@ def test_v04_dates_follow_the_workspace_time_zone(service, acl, work, migrator):
 
 def test_v05_period_is_validated(service, acl, work, migrator):
     w, a = history(service, acl, work, migrator)
-    day = datetime.date(2026, 11, 21)
+    day = local_today(migrator, 'Europe/Moscow') - 400 * ONE               # long before the synthetic history
     call = lambda d1, d2: status(lambda: work.metrics(a.token, w.ws, d1, d2))  # noqa: E731
     assert call('2026-11-22', '2026-11-21') == 422                         # start after end
     assert call('2026-02-30', '2026-03-01') == 422 and call('21.11.2026', '2026-11-21') == 422 and call(None, '2026-11-21') == 422
