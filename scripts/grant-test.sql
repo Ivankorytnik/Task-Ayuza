@@ -51,3 +51,8 @@ GRANT SELECT ON task_ayuza.labels, task_ayuza.project_stages, task_ayuza.project
 GRANT SELECT, INSERT ON task_ayuza.task_events TO task_ayuza_runtime;
 GRANT SELECT, INSERT, UPDATE ON task_ayuza.idempotency_requests, task_ayuza.task_access_grants TO task_ayuza_runtime;
 GRANT SELECT ON task_ayuza.task_events, task_ayuza.idempotency_requests, task_ayuza.task_access_grants TO task_ayuza_backup;
+
+-- M03.1. Runtime has no DDL/DELETE/TRUNCATE; blocker_events is append-only (no UPDATE).
+GRANT SELECT, INSERT, UPDATE ON task_ayuza.task_dependencies, task_ayuza.blockers TO task_ayuza_runtime;
+GRANT SELECT, INSERT ON task_ayuza.blocker_events TO task_ayuza_runtime;
+GRANT SELECT ON task_ayuza.task_dependencies, task_ayuza.blockers, task_ayuza.blocker_events TO task_ayuza_backup;

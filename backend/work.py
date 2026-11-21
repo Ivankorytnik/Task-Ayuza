@@ -164,7 +164,7 @@ class WorkService:
         raise _forbidden() if role is not None else _not_found()
 
     def _task_access(self, c, u, s, task, op):
-        """op: read | comment | edit | assign | archive | access. Returns (project, member_role, project_role)."""
+        """op: read | comment | edit | link | assign | archive | access. Returns (project, member_role, project_role)."""
         wid, uid = task['workspace_id'], u['id']
         project = None
         if task['project_id'] is not None:
@@ -188,10 +188,13 @@ class WorkService:
                 ok = basis or bool(grants & {'comment', 'content_edit'})
             elif op == 'edit':
                 ok = personal or prole in ('participant', 'project_manager') or 'content_edit' in grants
+            elif op == 'link':  # D02: result owner, executor (person or team), project participant/manager; not the bare author
+                ok = (uid in (task['result_owner_user_id'], task['assignee_user_id']) or prole in ('participant', 'project_manager')
+                      or 'link' in grants or _in_team(c, uid, task['executor_team_id']))
             else:  # assign | archive | access
                 ok = uid == task['result_owner_user_id'] or prole == 'project_manager'
         cap = {'read': 'read', 'comment': 'comment', 'edit': 'content_edit', 'assign': 'assign',
-               'archive': 'archive_restore', 'access': 'manage_access'}[op]
+               'archive': 'archive_restore', 'access': 'manage_access', 'link': 'link'}[op]
         if not ok and _grant_ok(c, s, uid, wid, cap):
             ok = True
         if ok:
