@@ -204,6 +204,28 @@ class WorkService:
             raise _forbidden()
         raise _not_found()
 
+    def workspace_directory(self, token, workspace_id):
+        """Pick lists for the client: teams linked to the workspace and its active members. Active members only
+        (a non-member gets the same 404 as a missing workspace); no e-mail, login or other account data."""
+        wid = as_uuid(workspace_id)
+
+        def run(c, u, s):
+            mine = membership(c, u['id'], wid)
+            if mine is None:
+                raise _not_found()
+            teams = execute(c, '''SELECT t.id, t.name FROM task_ayuza.workspace_teams wt
+                JOIN task_ayuza.teams t ON t.id = wt.team_id
+                WHERE wt.workspace_id=:w AND wt.active AND t.active ORDER BY t.name, t.id''', w=wid).mappings().all()
+            members = execute(c, '''SELECT m.user_id, us.display_name, m.role FROM task_ayuza.workspace_members m
+                JOIN task_ayuza.users us ON us.id = m.user_id
+                WHERE m.workspace_id=:w AND m.active AND us.active ORDER BY us.display_name, m.user_id''',
+                              w=wid).mappings().all()
+            my_teams = execute(c, '''SELECT tm.team_id FROM task_ayuza.team_members tm
+                WHERE tm.user_id=:u AND tm.active ORDER BY tm.team_id''', u=u['id']).scalars().all()
+            return {'role': mine['role'], 'teams': [dict(t) for t in teams], 'members': [dict(m) for m in members],
+                    'my_team_ids': list(my_teams)}
+        return self.auth.protected(token, run)
+
     # ------------------------------------------------------------------ projects
 
     def create_project(self, token, csrf, workspace_id, title, description, owner_user_id,

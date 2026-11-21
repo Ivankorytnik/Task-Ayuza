@@ -60,6 +60,16 @@ class ArchiveInput(BaseModel):
     expected_version: int
 
 
+@router.get('/workspaces')
+def list_workspaces(request: Request):
+    return request.app.state.acl.list_workspaces(token(request))
+
+
+@router.get('/workspaces/{workspace_id}/directory')
+def workspace_directory(workspace_id: str, request: Request):
+    return work(request).workspace_directory(token(request), workspace_id)
+
+
 @router.get('/workspaces/{workspace_id}/projects')
 def list_projects(workspace_id: str, request: Request, limit: int = 50, after: str | None = None):
     return work(request).list_projects(token(request), workspace_id, limit=limit, after=after)
