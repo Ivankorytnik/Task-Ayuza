@@ -1,11 +1,11 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const state = { user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null, risks: [], snap: null, subs: false, release: '', riskLinks: {}, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() };
+  blockers: [], deps: null, risks: [], snap: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() };
 const api = new Api((...args) => fetch(...args), () => { state.user = null; state.phase = 'login'; render(); });
 let pendingKey = null;                                  // one client_key per creation attempt, kept until it succeeds
 
@@ -348,6 +348,14 @@ function mainView() {
       state.workspaces.map((w) => h('option', { value: w.id, selected: w.id === state.ws }, w.name))),
     h('label', { for: 'st' }, 'Статус'),
     h('select', { id: 'st', on: { change: async (e) => { state.status = e.target.value; await loadTasks(true); } } }, options(STATUSES, state.status, 'Все')));
+  const toggle = (key, text) => h('label', { class: 'muted' }, h('input', { type: 'checkbox', checked: state.filters[key],
+    on: { change: async (e) => { state.filters[key] = e.target.checked; await loadTasks(true); } } }), ` ${text} `);
+  const pick = (key, text, pairs) => [h('label', { for: `f${key}` }, text), h('select', { id: `f${key}`, on: { change: async (e) => { state.filters[key] = e.target.value; await loadTasks(true); } } },
+    options(pairs, state.filters[key], 'Все'))];
+  const filters = h('div', { class: 'bar filters' }, toggle('mine', 'Мои'), toggle('overdue', 'Просроченные'), toggle('blocked', 'С блокером'),
+    pick('team', 'Команда', state.dir ? state.dir.teams.map((t) => [t.id, t.name]) : []),
+    pick('project', 'Проект', Object.entries(state.projNames)),
+    filtersActive(state.filters) ? h('button', { on: { click: async () => { state.filters = { mine: false, overdue: false, blocked: false, team: '', project: '' }; await loadTasks(true); } } }, 'Сбросить') : '');
   const tabs = h('div', { class: 'bar' }, [['list', 'Список'], ['board', 'Kanban'], ['gantt', 'Гант'], ['calendar', 'Календарь'], ['risks', 'Риски'], ['notes', `Уведомления${state.unread ? ` (${state.unread})` : ''}`]]
     .map(([key, text]) => h('button', { class: state.view === key ? 'primary' : '', on: { click: async () => {
       state.view = key; state.error = ''; state.message = '';
@@ -358,7 +366,7 @@ function mainView() {
   const messages = [h('div', { class: 'error', role: 'alert' }, state.error), h('div', { class: 'ok' }, state.message)];
   if (state.view === 'notes') return [tabs, messages, notesView()];
   if (state.view === 'risks') return [tabs, messages, risksView(), h('p', { class: 'muted' }, state.release)];
-  return [bar, tabs, messages, snapshotView(), state.dir ? createView() : '', h('div', { class: 'bar' }, h('button', { on: { click: () => exportTasks('csv') } }, 'Выгрузить CSV'),
+  return [bar, filters, tabs, messages, snapshotView(), state.dir ? createView() : '', h('div', { class: 'bar' }, h('button', { on: { click: () => exportTasks('csv') } }, 'Выгрузить CSV'),
       h('button', { on: { click: () => exportTasks('json') } }, 'Выгрузить JSON')),
     state.view === 'board' ? boardView() : state.view === 'gantt' ? ganttView() : state.view === 'calendar' ? calendarView() : table,
     state.more ? h('button', { on: { click: async () => { await loadTasks(false); } } }, 'Показать ещё') : '',
@@ -387,7 +395,7 @@ async function loadDirectory() {
 async function loadTasks(reset) {
   try {
     const after = !reset && state.tasks.length ? state.tasks[state.tasks.length - 1].id : null;
-    const page = await api.tasks(state.ws, state.view === 'list' ? state.status : '', after);
+    const page = await api.tasks(state.ws, { ...state.filters, status: state.view === 'list' ? state.status : '' }, after);
     state.tasks = reset ? page : state.tasks.concat(page);
     state.more = page.length === PAGE;
     if (reset) await loadSnapshot();

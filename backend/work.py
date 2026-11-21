@@ -647,24 +647,38 @@ class WorkService:
             return dict(task)
         return self.auth.protected(token, run)
 
-    def list_tasks(self, token, workspace_id, status=None, limit=50, after=None):
+    def list_tasks(self, token, workspace_id, status=None, limit=50, after=None, mine=False, team_id=None,
+                   project_id=None, overdue=False, blocked=False):
         """Stable pagination by id. Only tasks the caller can read; a read grant opens the workspace."""
         wid, after = as_uuid(workspace_id), (as_uuid(after) if after else None)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise AclError(422, 'Invalid limit')
         if status is not None and status not in STATUSES:
             raise AclError(422, 'Invalid status')
+        if not all(isinstance(flag, bool) for flag in (mine, overdue, blocked)):
+            raise AclError(422, 'Invalid filter')
+        team = as_uuid(team_id) if team_id else None
+        project = as_uuid(project_id) if project_id else None
 
         def run(c, u, s):
             member = membership(c, u['id'], wid)
             everything = _grant_ok(c, s, u['id'], wid, 'read')
             if member is None and not everything:
                 raise _not_found()
+            # Filters only narrow what the access predicate already allows; they open nothing.
             rows = execute(c, f'''SELECT t.* FROM task_ayuza.tasks t
                 WHERE t.workspace_id=:w AND t.archived_at IS NULL AND (CAST(:status AS text) IS NULL OR t.status=CAST(:status AS text))
                   AND (CAST(:after AS uuid) IS NULL OR t.id > CAST(:after AS uuid))
+                  AND (NOT CAST(:mine AS boolean) OR CAST(:u AS uuid) IN (t.created_by_user_id, t.result_owner_user_id, t.assignee_user_id))
+                  AND (CAST(:team AS uuid) IS NULL OR t.executor_team_id = CAST(:team AS uuid))
+                  AND (CAST(:project AS uuid) IS NULL OR t.project_id = CAST(:project AS uuid))
+                  AND (NOT CAST(:overdue AS boolean) OR (t.status NOT IN ('done','cancelled') AND t.due_date <
+                       (SELECT (clock_timestamp() AT TIME ZONE ws.timezone)::date FROM task_ayuza.workspaces ws WHERE ws.id = t.workspace_id)))
+                  AND (NOT CAST(:blocked AS boolean) OR EXISTS (SELECT 1 FROM task_ayuza.blockers b
+                       WHERE b.blocked_task_id = t.id AND b.status = 'active' AND b.archived_at IS NULL))
                   AND {READABLE_TASKS}
-                ORDER BY t.id LIMIT :n''', w=wid, u=u['id'], status=status, after=after, n=limit,
+                ORDER BY t.id LIMIT :n''', w=wid, u=u['id'], status=status, after=after, n=limit, mine=mine, team=team,
+                           project=project, overdue=overdue, blocked=blocked,
                            everything=everything, member=member is not None).mappings().all()
             return [dict(r) for r in rows]
         return self.auth.protected(token, run)
