@@ -22,6 +22,7 @@ from datetime import date
 
 from backend.acl import (AclError, _forbidden, _not_found, as_uuid, audit, check_version,
                          clean_text, grant_capability, membership)
+from backend.outbox import enqueue
 from backend.auth import AuthService, execute, one
 from backend.mfa import mfa_fresh
 
@@ -557,6 +558,10 @@ class WorkService:
             if row is None:
                 raise AclError(409, 'Version conflict')
             _event(c, u, tid, 'assigned')
+            enqueue(c, actor_id=u['id'], task=task, event_type='task_assigned', source_id=tid,
+                    source_key=f'v{row["version"]}',
+                    recipients=[x for x in (new_owner, new_assignee)
+                                if x not in (task['result_owner_user_id'], task['assignee_user_id'])])
 
             def snap(o, t, a):
                 return {'result_owner_user_id': str(o), 'executor_team_id': str(t),

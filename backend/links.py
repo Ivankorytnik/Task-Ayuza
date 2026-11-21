@@ -17,6 +17,7 @@ import uuid
 
 from backend.acl import AclError, _not_found, as_uuid, audit, check_version, clean_text
 from backend.auth import execute, one
+from backend.outbox import enqueue, people
 from backend.work import _date
 from backend.work_items import ItemsService
 
@@ -47,6 +48,11 @@ class LinksService(ItemsService):
             seen.add(task['workspace_id'])
             audit(c, u, s, request_id=request_id, entity_kind='task_dependency', entity_id=edge_id, action=action,
                   workspace_id=task['workspace_id'], old=None, new={'active': action != 'dependency.removed'})
+
+    def _notify_edge(self, c, u, edge_id, version, tasks):
+        for task in tasks:  # each side is told about its own task only; no foreign id or title is stored
+            enqueue(c, actor_id=u['id'], task=task, event_type='dependency_changed', source_id=edge_id,
+                    source_key=f'{edge_id}:v{version}', recipients=people(task))
 
     def _would_cycle(self, c, blocker_id, dependent_id) -> bool:
         return execute(c, '''WITH RECURSIVE walk(id) AS (
@@ -84,6 +90,7 @@ class LinksService(ItemsService):
             execute(c, '''INSERT INTO task_ayuza.task_dependencies (id, blocker_task_id, dependent_task_id, reason, created_by)
                 VALUES (:id, :b, :d, :r, :u)''', id=eid, b=bid, d=did, r=reason, u=u['id'])
             self._audit_edge(c, u, s, request_id, eid, 'dependency.created', [dependent, blocker])
+            self._notify_edge(c, u, eid, 1, [dependent, blocker])
             return {'id': eid, 'version': 1, 'created': True}
         return self.auth.protected(token, run, csrf=csrf, mutation=True)
 
@@ -113,6 +120,7 @@ class LinksService(ItemsService):
             if row is None:
                 raise AclError(409, 'Version conflict')
             self._audit_edge(c, u, s, request_id, eid, 'dependency.removed', [dependent, blocker])
+            self._notify_edge(c, u, eid, row['version'], [dependent, blocker])
             return {'id': eid, 'version': row['version'], 'changed': True}
         return self.auth.protected(token, run, csrf=csrf, mutation=True)
 
@@ -139,6 +147,7 @@ class LinksService(ItemsService):
             if row is None:
                 raise AclError(409, 'Version conflict')
             self._audit_edge(c, u, s, request_id, eid, 'dependency.restored', [dependent, blocker])
+            self._notify_edge(c, u, eid, row['version'], [dependent, blocker])
             return {'id': eid, 'version': row['version'], 'changed': True}
         return self.auth.protected(token, run, csrf=csrf, mutation=True)
 
@@ -298,6 +307,9 @@ class LinksService(ItemsService):
             if row is None:
                 raise AclError(409, 'Version conflict')
             self._blocker_event(c, u, bid, 'resolved' if resolved else 'reopened')
+            if resolved:
+                enqueue(c, actor_id=u['id'], task=task, event_type='blocker_resolved', source_id=bid,
+                        source_key=f'{bid}:v{row["version"]}', recipients=people(task) + [blocker['responsible_user_id']])
             self._blocker_audit(c, u, s, request_id, blocker, 'blocker.resolved' if resolved else 'blocker.reopened',
                                 {'active': not resolved})
             return {'id': bid, 'version': row['version'], 'changed': True}
