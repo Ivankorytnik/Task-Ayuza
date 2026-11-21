@@ -74,3 +74,11 @@ def test_n05_nested_children_are_flattened_fully():
     app = (WEB_DIR / 'app.js').read_text(encoding='utf-8')
     assert 'children.flat(Infinity)' in app          # found in a real browser: nested arrays rendered as [object HTMLDivElement]
     assert '[object' not in app
+
+
+def test_n06_links_views_use_api():
+    app = (WEB_DIR / 'app.js').read_text(encoding='utf-8')
+    logic = (WEB_DIR / 'logic.js').read_text(encoding='utf-8')
+    assert 'resolveBlocker' in app and 'removeDependency' in app and 'linkRiskTask' in app and 'dependencyPayload' in app
+    for path in ('/api/v1/blockers/${id}/resolved', '/api/v1/dependencies', '/api/v1/risks/${riskId}/tasks/${taskId}'):
+        assert path in logic, path

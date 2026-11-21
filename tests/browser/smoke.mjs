@@ -20,6 +20,7 @@ console.log('COLS:', await ev(`document.querySelectorAll('.col').length+' cols, 
 console.log('DONE opts:', await ev(`[...document.querySelectorAll('.col[data-status=done] .tcard select option')].map(o=>o.textContent).join(',')`));
 await ev(`document.querySelector('.ttitle').click()`); await wait(800); console.log('DETAIL:', (await text()).slice(-300));
 await click('Риски'); await wait(800); console.log('RISKS:', await text());
+await click('Связанные задачи'); await wait(600); console.log('RISKLINKS:', await ev(`document.querySelector('main').innerText.includes('Отвязать')+' hidden '+document.querySelector('main').innerText.includes('Скрытых связей: 1')`));
 await click('Уведомления'); await wait(800); await ev("[...document.querySelectorAll('button')].find(b=>b.textContent.startsWith('Список')).click()"); await wait(600); await ev("document.querySelector('tbody tr, .tcard .ttitle, td a, td button')?.click()"); await wait(800); console.log('NOTES:', await text());
 console.log('ERRORS:', logs.length? logs.join('\n'):'none');
-console.log('BLOCKERS:', await ev(`document.querySelector('main').innerText.includes('Ждём договор')+' deps '+document.querySelector('main').innerText.includes('Зависит от')`)); ch.kill(); process.exit(0);
+console.log('BLOCKERS:', await ev(`document.querySelector('main').innerText.includes('Ждём договор')+' deps '+document.querySelector('main').innerText.includes('Зависит от')+' remove '+document.querySelector('main').innerText.includes('Убрать')+' resolve '+document.querySelector('main').innerText.includes('Снять блокер')`)); ch.kill(); process.exit(0);

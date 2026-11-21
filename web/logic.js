@@ -122,6 +122,14 @@ export function checkPayload(form) {
   return { payload };
 }
 
+export function dependencyPayload(taskId, otherId, direction, reason) {
+  if (!otherId || otherId === taskId) return { error: 'Выберите другую задачу.' };
+  const text = (reason || '').trim();
+  if (text.length > 500) return { error: 'Причина: не более 500 символов.' };
+  const blocked = direction === 'blocked_by';
+  return { payload: { blocker_task_id: blocked ? otherId : taskId, dependent_task_id: blocked ? taskId : otherId, reason: text } };
+}
+
 export class Api {
   constructor(fetchImpl, onAuthLost = () => {}) {
     this.fetch = fetchImpl;
@@ -190,5 +198,10 @@ export class Api {
     if (!res.ok) { if (res.status === 401) this.onAuthLost(); throw new ApiError(res.status); }
     return { text: await res.text(), rows: Number(res.headers.get('X-Export-Row-Count') || 0), name: `tasks.${format}` };
   }
+  resolveBlocker(id, version, resolved) { return this.request('POST', `/api/v1/blockers/${id}/resolved`, { expected_version: version, resolved }, true); }
+  addDependency(payload) { return this.request('POST', '/api/v1/dependencies', payload, true); }
+  removeDependency(id, version, reason) { return this.request('POST', `/api/v1/dependencies/${id}/remove`, { expected_version: version, reason }, true); }
+  riskLinks(id) { return this.request('GET', `/api/v1/risks/${id}/links`); }
+  linkRiskTask(riskId, taskId, linked) { return this.request('PUT', `/api/v1/risks/${riskId}/tasks/${taskId}`, { linked }, true); }
   addComment(id, body) { return this.request('POST', `/api/v1/tasks/${id}/comments`, { body }, true); }
 }
