@@ -14,10 +14,11 @@ http.createServer((req,res)=>{
   if(u.endsWith('/directory'))return J(res,{role:'member',teams:[],members:[{user_id:'u1',display_name:'Иван',role:'member'}],my_team_ids:[]});
   if(u==='/api/v1/workspaces/w1/tasks')return J(res,[task(1,'new'),task(2,'done'),task(3,'blocked')]);
   if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/comments'))return J(res,[]);
-  if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/blockers'))return J(res,[{id:'b1',title:'Ждём договор',status:'active',expected_resolution_date:'2026-12-20'}]);
-  if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/dependencies'))return J(res,{edges:[{id:'e1',direction:'blocked_by',title:'Задача 2',status:'done'}],hidden_external:1});
+  if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/blockers'))return J(res,[{id:'b1',version:1,title:'Ждём договор',status:'active',expected_resolution_date:'2026-12-20'}]);
+  if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/dependencies'))return J(res,{edges:[{id:'e1',version:1,direction:'blocked_by',title:'Задача 2',status:'done'}],hidden_external:1});
   if(u.startsWith('/api/v1/tasks/t'))return J(res,{...task(1,'new'),team_id:'x',owner_user_id:'u1'});
   if(u==='/api/v1/notifications')return J(res,[{id:'n1',task_id:'t1',event_type:'task_assigned',created_at:'2026-11-21',read_at:null}]);
+  if(u==='/api/v1/risks/r1/links')return J(res,{tasks:[{task_id:'t1',title:'Задача 1',status:'new'}],blockers:[],hidden_tasks:1,hidden_blockers:0});
   if(u==='/api/v1/risks')return J(res,[{id:'r1',category:'backup',description:'Нет копии',probability:4,impact:5,control_status:'gray'}]);
   if(u==='/api/v1/tasks')return J(res,{items:[task(1,'new'),task(2,'done')],next:null});
   if(u==='/api/v1/release')return J(res,{label:'Версия не определена'});

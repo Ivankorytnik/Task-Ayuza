@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -157,6 +157,19 @@ await test('export reads text and row count; errors keep status', async () => {
   assert.deepEqual(await api.exportTasks('w1', 'csv', ''), { text: 'a,b\n', rows: 3, name: 'tasks.csv' });
   const denied = new Api(async () => ({ ok: false, status: 403 }));
   await assert.rejects(() => denied.exportTasks('w1', 'json', 'done'), (e) => e.status === 403);
+});
+
+await test('dependency payload direction and link requests', async () => {
+  assert.ok(dependencyPayload('a', '', 'blocked_by', '').error);
+  assert.ok(dependencyPayload('a', 'a', 'blocks', '').error);
+  assert.ok(dependencyPayload('a', 'b', 'blocks', 'x'.repeat(501)).error);
+  assert.deepEqual(dependencyPayload('a', 'b', 'blocked_by', ' нужен ').payload, { blocker_task_id: 'b', dependent_task_id: 'a', reason: 'нужен' });
+  assert.deepEqual(dependencyPayload('a', 'b', 'blocks', '').payload, { blocker_task_id: 'a', dependent_task_id: 'b', reason: '' });
+  const f = fakeFetch([]); const api = new Api(f);
+  await api.resolveBlocker('b1', 3, true); await api.removeDependency('e1', 2, 'ошибка'); await api.riskLinks('r1'); await api.linkRiskTask('r1', 't1', false);
+  assert.deepEqual(f.calls.map((c) => c.init.method + ' ' + c.path), ['POST /api/v1/blockers/b1/resolved', 'POST /api/v1/dependencies/e1/remove',
+    'GET /api/v1/risks/r1/links', 'PUT /api/v1/risks/r1/tasks/t1']);
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { expected_version: 3, resolved: true });
 });
 
 console.log(`${passed} passed`);

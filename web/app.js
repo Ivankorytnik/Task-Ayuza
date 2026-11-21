@@ -1,11 +1,11 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const state = { user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null, risks: [], release: '' };
+  blockers: [], deps: null, risks: [], release: '', riskLinks: {} };
 const api = new Api((...args) => fetch(...args), () => { state.user = null; state.phase = 'login'; render(); });
 let pendingKey = null;                                  // one client_key per creation attempt, kept until it succeeds
 
@@ -201,7 +201,25 @@ function riskCard(risk) {
     h('span', { class: `light ${risk.control_status}`, role: 'img', 'aria-label': label(TRAFFIC, risk.control_status) }, label(TRAFFIC, risk.control_status)),
     h('div', {}, h('strong', {}, risk.description)),
     h('div', { class: 'muted' }, `${label(RISK_CATEGORIES, risk.category)} · вероятность ${risk.probability}, влияние ${risk.impact} · ${severityLevel(risk.probability, risk.impact)}`),
-    form);
+    form, linksBlock(risk));
+}
+
+function linksBlock(risk) {
+  const links = state.riskLinks[risk.id];
+  const pick = h('select', { 'aria-label': 'Привязать к задаче', on: { change: async (e) => {
+    if (!e.target.value) return;
+    try { await api.linkRiskTask(risk.id, e.target.value, true); state.error = ''; await showRiskLinks(risk.id); } catch (error) { fail(error); }
+  } } }, [h('option', { value: '' }, 'Привязать к задаче…'), ...state.tasks.map((t) => h('option', { value: t.id }, t.title))]);
+  return h('div', {},
+    h('button', { type: 'button', on: { click: () => showRiskLinks(risk.id) } }, 'Связанные задачи'),
+    links ? [links.tasks.map((t) => h('div', { class: 'comment' }, `${t.title} (${label(STATUSES, t.status)}) `,
+      h('button', { type: 'button', on: { click: async () => { try { await api.linkRiskTask(risk.id, t.task_id, false); await showRiskLinks(risk.id); } catch (error) { fail(error); } } } }, 'Отвязать'))),
+    links.hidden_tasks ? h('div', { class: 'muted' }, `Скрытых связей: ${links.hidden_tasks}`) : '', pick] : '');
+}
+
+async function showRiskLinks(id) {
+  try { state.riskLinks[id] = await api.riskLinks(id); state.error = ''; } catch (error) { state.error = error.message; }
+  render();
 }
 
 function risksView() {
@@ -248,8 +266,11 @@ function blockersView() {
   h('h3', {}, 'Блокеры и зависимости'),
   state.blockers.length ? '' : h('p', { class: 'muted' }, 'Блокеров нет.'),
   state.blockers.map((b) => h('div', { class: 'comment' }, h('strong', {}, b.title), ` · ${b.status === 'resolved' ? 'снят' : 'активен'}`,
-    b.expected_resolution_date ? h('div', { class: 'muted' }, `Ожидаемый срок: ${b.expected_resolution_date}`) : '')),
-  state.deps ? [state.deps.edges.map((e) => h('div', { class: 'comment' }, e.direction === 'blocked_by' ? 'Зависит от: ' : 'Блокирует: ', e.title, ` (${label(STATUSES, e.status)})`)),
+    b.expected_resolution_date ? h('div', { class: 'muted' }, `Ожидаемый срок: ${b.expected_resolution_date}`) : '',
+    h('button', { type: 'button', on: { click: async () => { try { await api.resolveBlocker(b.id, b.version, b.status !== 'resolved'); state.error = ''; await openTask(task.id); } catch (error) { if (error.status === 409) await openTask(task.id); fail(error); } } } },
+      b.status === 'resolved' ? 'Вернуть блокер' : 'Снять блокер'))),
+  state.deps ? [state.deps.edges.map((e) => h('div', { class: 'comment' }, e.direction === 'blocked_by' ? 'Зависит от: ' : 'Блокирует: ', e.title, ` (${label(STATUSES, e.status)})`,
+    h('button', { type: 'button', on: { click: async () => { try { await api.removeDependency(e.id, e.version, 'Убрано из карточки'); state.error = ''; await openTask(task.id); } catch (error) { if (error.status === 409) await openTask(task.id); fail(error); } } } }, 'Убрать'))),
     state.deps.hidden_external ? h('div', { class: 'muted' }, `Скрытых внешних зависимостей: ${state.deps.hidden_external}`) : ''] : '',
   h('label', { for: 'btitle' }, 'Новый блокер'), h('input', { id: 'btitle', name: 'title', maxlength: 200, required: true }),
   h('div', { class: 'bar' },
@@ -257,7 +278,21 @@ function blockersView() {
       h('select', { id: 'bresp', name: 'responsible' }, (state.dir ? state.dir.members : []).map((m) => h('option', { value: m.user_id, selected: m.user_id === state.user.id }, m.display_name)))),
     h('div', {}, h('label', { for: 'bdue' }, 'Ожидаемый срок'), h('input', { id: 'bdue', name: 'due_date', placeholder: '2026-12-31', maxlength: 10 }))),
   h('button', { type: 'submit' }, 'Добавить блокер'));
-  return form;
+  const dep = h('form', { class: 'card', on: { submit: async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(dep).entries());
+    const out = dependencyPayload(task.id, data.other, data.direction, data.reason);
+    if (out.error) { state.error = out.error; return render(); }
+    try { await api.addDependency(out.payload); state.error = ''; await openTask(task.id); } catch (error) { fail(error); }
+  } } },
+  h('h3', {}, 'Новая зависимость'),
+  h('label', { for: 'ddir' }, 'Тип'), h('select', { id: 'ddir', name: 'direction' },
+    h('option', { value: 'blocked_by' }, 'Эта задача зависит от'), h('option', { value: 'blocks' }, 'Эта задача блокирует')),
+  h('label', { for: 'doth' }, 'Другая задача'), h('select', { id: 'doth', name: 'other' },
+    state.tasks.filter((t) => t.id !== task.id).map((t) => h('option', { value: t.id }, t.title))),
+  h('label', { for: 'drsn' }, 'Причина'), h('input', { id: 'drsn', name: 'reason', maxlength: 500 }),
+  h('button', { type: 'submit' }, 'Добавить зависимость'));
+  return [form, dep];
 }
 
 function mainView() {
