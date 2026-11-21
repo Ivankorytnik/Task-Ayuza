@@ -172,7 +172,7 @@ def main():
                     assert not c.execute(text("SELECT pg_has_role(current_user,'task_ayuza_migrator','MEMBER') OR pg_has_role(current_user,'task_ayuza_backup','MEMBER')")).scalar_one()
                 runtime.dispose()
                 test_env = dict(env, TASK_AYUZA_DATABASE_URL=urls['runtime'],
-                    TASK_AYUZA_TEST_RUNTIME_URL=urls['runtime'], TASK_AYUZA_TEST_BACKUP_URL=urls['backup'], TASK_AYUZA_TEST_MIGRATOR_URL=urls['migrator'], TASK_AYUZA_ORIGIN='https://test.local', TASK_AYUZA_AUTH_HMAC_KEY=secrets.token_hex(32))
+                    TASK_AYUZA_TEST_RUNTIME_URL=urls['runtime'], TASK_AYUZA_TEST_BACKUP_URL=urls['backup'], TASK_AYUZA_TEST_MIGRATOR_URL=urls['migrator'], TASK_AYUZA_ORIGIN='https://test.local', TASK_AYUZA_AUTH_HMAC_KEY=secrets.token_hex(32), TASK_AYUZA_MFA_KEY=secrets.token_hex(32))
                 subprocess.run([sys.executable, '-m', 'pytest', '-q', '-s', 'tests/test_m01_foundation.py', 'tests/test_m01_auth.py', 'tests/test_m01_acl.py', 'tests/test_m01_mfa_grants.py', '--tb=short'], env=test_env, check=True)
                 engine.dispose()
                 print('A04-A09 PASS: effective ACL and integration suite; no skipped tests', flush=True)
