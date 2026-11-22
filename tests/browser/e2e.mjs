@@ -180,7 +180,8 @@ await until("[...document.querySelectorAll('button')].some((b) => b.textContent.
 await click('Выгрузить CSV');
 check('csv export produces a file', await until("window.__blobs.length === 1"), String(await ev('window.__blobs.length')));
 check('csv export reports the rows', await until("document.body.innerText.includes('Выгружено строк')"), (await text()).slice(-400));
-check('csv holds the exporter task', await ev("window.__blobs[0].text().then((t) => t.includes('Задача экспорта'))"));
+const csvText = await ev("window.__blobs[0].text()");
+check('csv holds the exporter task', String(csvText).includes('Задача экспорта'), String(csvText).slice(0, 400));
 await click('Выгрузить JSON');
 check('json export succeeds', await until("window.__blobs.length === 2"));
 check('json is valid and holds the task', await ev("window.__blobs[1].text().then((t) => { const d = JSON.parse(t); return JSON.stringify(d).includes('Задача экспорта'); })"));
