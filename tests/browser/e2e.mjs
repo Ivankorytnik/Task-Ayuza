@@ -178,7 +178,8 @@ execFileSync('python', ['tests/e2e/mark_mfa.py', user.exporter.id], { stdio: 'in
 await ev("window.__blobs = []; const orig = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return orig(b); }; true");
 await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выгрузить CSV')");
 await click('Выгрузить CSV');
-check('csv export succeeds and reports the rows', await until("window.__blobs.length === 1 && document.body.innerText.includes('Выгружено строк')"), (await text()).slice(0, 300));
+check('csv export produces a file', await until("window.__blobs.length === 1"), String(await ev('window.__blobs.length')));
+check('csv export reports the rows', await until("document.body.innerText.includes('Выгружено строк')"), (await text()).slice(-400));
 check('csv holds the exporter task', await ev("window.__blobs[0].text().then((t) => t.includes('Задача экспорта'))"));
 await click('Выгрузить JSON');
 check('json export succeeds', await until("window.__blobs.length === 2"));
