@@ -67,8 +67,9 @@ def main():
         new_task(work, me, w, title=title)
     # two dated tasks with a dependency for the Gantt connectors (dates are relative to today, so the check does not rot)
     day = lambda n: (date.today() + timedelta(days=n)).isoformat()   # noqa: E731
-    first = new_task(work, me, w, title='Гант A', start_date=day(1), due_date=day(5))
-    second = new_task(work, me, w, title='Гант B', start_date=day(8), due_date=day(12))
+    project = work.create_project(me.token, me.csrf, w.ws, 'Проект Гант', 'synthetic', me.id, start_date=day(0), due_date=day(14))
+    first = new_task(work, me, w, title='Гант A', start_date=day(1), due_date=day(5), project_id=project['id'])
+    second = new_task(work, me, w, title='Гант B', start_date=day(8), due_date=day(12), project_id=project['id'])
     work.add_dependency(me.token, me.csrf, first['id'], second['id'], 'B после A')
     print(json.dumps({'login': login, 'password': PASSWORD, 'workspace': str(w.ws),
                       'temp': {'login': t_login, 'temporary': t_temporary, 'new_password': NEW_PASSWORD},

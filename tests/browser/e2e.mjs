@@ -65,6 +65,7 @@ check('risk centre says access is for the controller only (no role)', await unti
 // Gantt: dependency connector from A to B
 await click('Гант');
 check('gantt shows a dependency connector after the blocker', await until("[...document.querySelectorAll('.gdep')].some((e) => e.getAttribute('title') === 'После: Гант A' && !e.classList.contains('conflict'))"), (await text()).slice(0, 300));
+check('gantt shows the project bar in its group', await until("document.querySelectorAll('.gproj').length === 1"), (await text()).slice(0, 300));
 check('gantt connector has an arrow head', await ev("document.querySelectorAll('.garrow').length >= 1"));
 await click('Список');
 
