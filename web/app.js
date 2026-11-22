@@ -229,7 +229,7 @@ function risksView() {
     e.preventDefault();
     const out = riskPayload(Object.fromEntries(new FormData(form).entries()));
     if (out.error) { state.error = out.error; return render(); }
-    try { await api.createRisk(out.payload); state.error = ''; await loadRisks(); } catch (error) { fail(error); }
+    try { await api.createRisk({ ...out.payload, owner_user_id: state.user.id }); state.error = ''; await loadRisks(); } catch (error) { fail(error); }
   } } },
   h('h3', {}, 'Новый риск'),
   h('label', { for: 'rcat' }, 'Категория'), h('select', { id: 'rcat', name: 'category' }, RISK_CATEGORIES.map(([k, t]) => h('option', { value: k }, t))),
@@ -400,6 +400,7 @@ function render() {
   if (!state.user) { root.append(state.phase === 'password' ? passwordView() : loginView()); return; }
   root.append(h('header', {}, h('div', { class: 'brand' }, 'Task-Ayuza'), h('span', {}, state.user.display_name),
     h('button', { on: { click: async () => { try { await api.logout(); } catch { /* the session may already be gone */ }
+      try { await api.bootstrap(); } catch { /* a new pre-login token is needed for the next sign-in */ }
       state.user = null; state.phase = 'login'; state.tasks = []; state.selected = null; render(); } } }, 'Выйти')),
   h('main', {}, mainView()));
 }
