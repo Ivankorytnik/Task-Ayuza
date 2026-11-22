@@ -6,10 +6,14 @@ import { readFileSync } from 'node:fs';
 const [base, userFile] = process.argv.slice(2);
 const user = JSON.parse(readFileSync(userFile, 'utf8'));
 const ch = spawn('google-chrome', ['--headless=new', '--no-sandbox', '--disable-gpu', '--ignore-certificate-errors',
-  '--remote-debugging-port=9335', 'about:blank'], { stdio: 'ignore' });
+  '--remote-debugging-port=9335', '--user-data-dir=/tmp/e2e-chrome', 'about:blank'], { stdio: ['ignore', 'ignore', 'inherit'] });
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-await wait(3000);
-const list = await (await fetch('http://localhost:9335/json')).json();
+let list = null;
+for (let i = 0; i < 60 && !list; i += 1) {                      // the debugging port needs a moment on a cold runner
+  await wait(500);
+  try { const found = await (await fetch('http://127.0.0.1:9335/json')).json(); if (found.some((t) => t.type === 'page')) list = found; } catch { /* not up yet */ }
+}
+if (!list) { console.error('Chrome did not open its debugging port'); ch.kill(); process.exit(1); }
 const ws = new WebSocket(list.find((t) => t.type === 'page').webSocketDebuggerUrl);
 await new Promise((r) => { ws.onopen = r; });
 let id = 0; const pend = new Map(); const problems = [];
