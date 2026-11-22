@@ -229,7 +229,7 @@ function risksView() {
     e.preventDefault();
     const out = riskPayload(Object.fromEntries(new FormData(form).entries()));
     if (out.error) { state.error = out.error; return render(); }
-    try { await api.createRisk(out.payload); state.error = ''; await loadRisks(); } catch (error) { fail(error); }
+    try { await api.createRisk({ ...out.payload, owner_user_id: state.user.id }); state.error = ''; await loadRisks(); } catch (error) { fail(error); }
   } } },
   h('h3', {}, 'Новый риск'),
   h('label', { for: 'rcat' }, 'Категория'), h('select', { id: 'rcat', name: 'category' }, RISK_CATEGORIES.map(([k, t]) => h('option', { value: k }, t))),
