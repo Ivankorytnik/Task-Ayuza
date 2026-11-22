@@ -400,6 +400,7 @@ function render() {
   if (!state.user) { root.append(state.phase === 'password' ? passwordView() : loginView()); return; }
   root.append(h('header', {}, h('div', { class: 'brand' }, 'Task-Ayuza'), h('span', {}, state.user.display_name),
     h('button', { on: { click: async () => { try { await api.logout(); } catch { /* the session may already be gone */ }
+      try { await api.bootstrap(); } catch { /* a new pre-login token is needed for the next sign-in */ }
       state.user = null; state.phase = 'login'; state.tasks = []; state.selected = null; render(); } } }, 'Выйти')),
   h('main', {}, mainView()));
 }
