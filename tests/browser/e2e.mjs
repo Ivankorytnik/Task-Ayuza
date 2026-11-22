@@ -163,6 +163,11 @@ await click('Выгрузить JSON');
 check('back online: the client works again', await until("document.body.innerText.includes('Выгрузка требует права')"), (await text()).slice(0, 300));
 await signOut();
 
+// API reference page: rendered from the service's own openapi.json under the same CSP
+await send('Page.navigate', { url: `${base}/app/api.html` });
+check('api reference lists the login endpoint', await until("document.body.innerText.includes('POST /api/v1/auth/login')"), (await text()).slice(0, 300));
+check('api reference marks mutating calls', await ev("document.body.innerText.includes('изменяющий, нужен CSRF')"));
+
 // mobile: narrow touch screen, no sideways page scroll, controls reachable
 await send('Emulation.setDeviceMetricsOverride', { width: 360, height: 740, deviceScaleFactor: 2, mobile: true });
 await send('Emulation.setTouchEmulationEnabled', { enabled: true });
