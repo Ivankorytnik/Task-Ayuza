@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { dependencyLinks, METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { projectBar, dependencyLinks, METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -226,6 +226,18 @@ await test('dependency links: connector from the blocker end to the dependent st
   assert.deepEqual(dependencyLinks(rows, {}), {});
   assert.ok(dependencyLinks([{ task: { id: 'a' }, left: 0, width: 10 }, { task: { id: 'b' }, left: 10, width: 5 }],
     { b: [{ direction: 'blocked_by', task_id: 'a', title: 'A' }] }).b[0].width >= 0.5);       // touching bars still draw a visible connector
+});
+
+await test('project bar: scale position, clipping and missing dates', () => {
+  const day = (d) => Date.UTC(2026, 0, d) / 86400000;
+  const min = day(1); const span = 20;
+  assert.deepEqual(projectBar({ start_date: '2026-01-06', due_date: '2026-01-10' }, min, span), { left: 25, width: 25 });
+  const clipped = projectBar({ start_date: '2025-12-20', due_date: '2026-01-05' }, min, span);
+  assert.equal(clipped.left, 0); assert.equal(clipped.width, 25);
+  assert.equal(projectBar({ start_date: '2026-03-01', due_date: '2026-03-05' }, min, span), null);
+  assert.equal(projectBar({ start_date: '2026-01-06' }, min, span), null);
+  assert.equal(projectBar(undefined, min, span), null);
+  assert.equal(projectBar({ start_date: '2026-01-06', due_date: '2026-01-10' }, min, 0), null);
 });
 
 await test('service worker caches only GET shell files and never /api', async () => {

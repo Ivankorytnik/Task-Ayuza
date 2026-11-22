@@ -1,11 +1,11 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, dependencyLinks, MAX_DEP_TASKS, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, projectBar, dependencyLinks, MAX_DEP_TASKS, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const fresh = () => ({ user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null, ganttDeps: {}, risks: [], snap: null, period: { from: '', to: '' }, metrics: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() });
+  blockers: [], deps: null, ganttDeps: {}, projDates: {}, risks: [], snap: null, period: { from: '', to: '' }, metrics: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() });
 const state = fresh();
 function clearSession() { Object.assign(state, fresh()); }       // nothing of the previous user may stay in memory
 const api = new Api((...args) => fetch(...args), () => { clearSession(); render(); });
@@ -302,7 +302,12 @@ function ganttView() {
     g.rows.length ? h('div', { class: 'gscroll' }, h('div', { class: 'grow axis' }, h('div', { class: 'glabel' }, ''),
       h('div', { class: 'gtrack', css: { width } }, scaleTicks(g.min, g.span, state.scale).map((t) => h('span', { class: 'tick', css: { left: `${t.left}%` } }, t.text))))) : h('p', { class: 'muted' }, 'Нет задач со сроками.'),
     groupRows(g.rows, state.projNames).map((group) => h('div', { class: 'ggroup' }, h('h3', {}, group.title),
-      h('div', { class: 'gscroll' }, group.rows.map((r) => h('div', { class: 'grow' },
+      h('div', { class: 'gscroll' }, (() => {
+        const bar = group.key ? projectBar(state.projDates[group.key], g.min, g.span) : null;
+        return bar ? h('div', { class: 'grow' }, h('div', { class: 'glabel muted' }, 'Сроки проекта'),
+          h('div', { class: 'gtrack', css: { width } }, h('div', { class: 'gproj', css: { left: `${bar.left}%`, width: `${bar.width}%` },
+            title: `${state.projDates[group.key].start_date} - ${state.projDates[group.key].due_date}` }))) : '';
+      })(), group.rows.map((r) => h('div', { class: 'grow' },
         h('div', { class: 'glabel', on: { click: () => openTask(r.task.id) } }, r.task.title), track(r)))))),
     g.undated.length ? h('div', { class: 'card' }, h('h3', {}, `Без дат (${g.undated.length})`),
       g.undated.map((t) => h('div', { class: 'ctask', on: { click: () => openTask(t.id) } }, t.title))) : '');
@@ -422,9 +427,9 @@ function render() {
 
 async function loadDirectory() {
   state.dir = state.ws ? await api.directory(state.ws) : null;
-  state.projNames = {};
+  state.projNames = {}; state.projDates = {};
   if (state.ws) {
-    try { for (const p of await api.projects(state.ws)) state.projNames[p.id] = p.title; } catch { /* groups fall back to a generic name */ }
+    try { for (const p of await api.projects(state.ws)) { state.projNames[p.id] = p.title; state.projDates[p.id] = p; } } catch { /* groups fall back to a generic name */ }
   }
 }
 

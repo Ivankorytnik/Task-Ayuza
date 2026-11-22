@@ -213,6 +213,15 @@ export function groupRows(rows, names) {
   return [...groups.values()].sort((a, b) => (a.key === '') - (b.key === '') || a.title.localeCompare(b.title, 'ru'));
 }
 
+// Project bar on the shared Gantt scale: from the project's own dates, clipped to the visible range; null without dates
+export function projectBar(project, min, span) {
+  if (!project || !hasDate(project.start_date) || !hasDate(project.due_date) || !span) return null;
+  const from = dayNumber(project.start_date) - min; const to = dayNumber(project.due_date) - min + 1;
+  if (to <= 0 || from >= span || to <= from) return null;
+  const left = Math.max(from, 0) / span * 100; const right = Math.min(to, span) / span * 100;
+  return { left, width: Math.max(right - left, 0.5) };
+}
+
 // Month grid starting on Monday; each cell holds the tasks due that day.
 export function monthGrid(year, month, tasks) {
   const first = Date.UTC(year, month, 1) / DAY;
