@@ -1,5 +1,5 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, metricsCsv, projectBar, stageBars, MAX_STAGE_PROJECTS, dependencyLinks, MAX_DEP_TASKS, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, metricsCsv, projectBar, stageBars, dragDays, shiftDates, MAX_STAGE_PROJECTS, dependencyLinks, MAX_DEP_TASKS, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
@@ -296,7 +296,8 @@ function ganttView() {
       h('div', { class: `garrow${l.conflict ? ' conflict' : ''}`, css: { left: `${l.to}%` } })]),
     marker !== null && marker >= 0 && marker <= 100 ? h('div', { class: 'gtoday', css: { left: `${marker}%` } }) : '',
     h('div', { class: `gbar ${r.task.status}${isOverdue(r.task, today) ? ' late' : ''}`, css: { left: `${r.left}%`, width: `${Math.max(r.width, 1)}%` },
-      title: `${r.task.start_date || ''} ${r.task.due_date || ''}${isOverdue(r.task, today) ? ' просрочена' : ''}` }));
+      title: `${r.task.start_date || ''} ${r.task.due_date || ''}${isOverdue(r.task, today) ? ' просрочена' : ''}`,
+      on: { pointerdown: (e) => startBarDrag(e, r.task, g.span) } }));
   return h('div', { class: 'gantt' },
     h('div', { class: 'bar' }, SCALES.map(([key, text]) => h('button', { class: state.scale === key ? 'primary' : '',
       on: { click: () => { state.scale = key; render(); } } }, text))),
@@ -315,6 +316,22 @@ function ganttView() {
         h('div', { class: 'glabel', on: { click: () => openTask(r.task.id) } }, r.task.title), track(r)))))),
     g.undated.length ? h('div', { class: 'card' }, h('h3', {}, `Без дат (${g.undated.length})`),
       g.undated.map((t) => h('div', { class: 'ctask', on: { click: () => openTask(t.id) } }, t.title))) : '');
+}
+
+// Drag a Gantt bar sideways: whole days, saved through the ordinary task update (version check and permissions stay on the server)
+function startBarDrag(e, task, span) {
+  if (e.button !== undefined && e.button !== 0) return;
+  const bar = e.currentTarget; const startX = e.clientX; const trackPx = bar.parentElement.getBoundingClientRect().width;
+  const done = async (up) => {
+    bar.removeEventListener('pointerup', done); bar.removeEventListener('pointercancel', cancel);
+    const changes = shiftDates(task, dragDays(up.clientX - startX, trackPx, span));
+    if (!Object.keys(changes).length) return;
+    try { await api.updateTask(task.id, task.version, changes); state.error = ''; state.message = 'Сроки изменены.'; await loadTasks(true); }
+    catch (error) { fail(error); if (error.status === 409) await loadTasks(true); }
+  };
+  const cancel = () => { bar.removeEventListener('pointerup', done); bar.removeEventListener('pointercancel', cancel); };
+  bar.addEventListener('pointerup', done); bar.addEventListener('pointercancel', cancel);
+  if (bar.setPointerCapture) { try { bar.setPointerCapture(e.pointerId); } catch { /* capture is optional */ } }
 }
 
 function calendarView() {

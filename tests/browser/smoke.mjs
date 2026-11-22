@@ -24,6 +24,12 @@ await click('Связанные задачи'); await wait(600); console.log('RI
 await click('Гант'); await wait(600); console.log('GANTT:', await ev(`document.querySelectorAll('.gbar').length+' bars, first width '+document.querySelector('.gbar').style.width+', rendered px '+Math.round(document.querySelector('.gbar').getBoundingClientRect().width)`));
 console.log('GANTT2:', await ev(`[...document.querySelectorAll('.ggroup h3')].map(h=>h.textContent).join('|')+' late='+document.querySelectorAll('.gbar.late').length+' today='+document.querySelectorAll('.gtoday').length+' undated='+(document.querySelector('main').innerText.includes('Без дат'))+' ticks='+document.querySelectorAll('.axis .tick').length`));
 console.log('STAGES:', await ev(`document.querySelectorAll('.gstage').length+' stage bars, labels '+[...document.querySelectorAll('.glabel')].filter(l=>l.textContent.startsWith('Этап')).map(l=>l.textContent).join('|')`));
+await ev(`document.querySelector('.gbar').scrollIntoView({block:'center'})`); await wait(200);
+const r=await ev(`(()=>{const b=document.querySelector('.gbar');const a=b.getBoundingClientRect();const t=b.parentElement.getBoundingClientRect();return {x:a.x+a.width/2,y:a.y+a.height/2,track:t.width,ticks:document.querySelectorAll('.axis .tick').length}})()`);
+const mouse=(type,x,y)=>send('Input.dispatchMouseEvent',{type,x,y,button:'left',buttons:type==='mouseReleased'?0:1,clickCount:1,pointerType:'mouse'});
+const dx=r.track/(+process.env.SPAN||11)*2;
+await mouse('mousePressed',r.x,r.y); await mouse('mouseMoved',r.x+dx/2,r.y); await mouse('mouseMoved',r.x+dx,r.y); await mouse('mouseReleased',r.x+dx,r.y); await wait(600);
+console.log('DRAG:', JSON.stringify(await (await fetch('http://localhost:8765/__last')).json()));
 await click('День'); await wait(300); console.log('DAYTICKS:', await ev(`document.querySelectorAll('.axis .tick').length+' track px '+Math.round(document.querySelector('.gtrack').getBoundingClientRect().width)`));
 await click('Календарь'); await wait(600); console.log('CAL:', await ev(`document.querySelectorAll('.cell').length+' cells, tasks '+document.querySelectorAll('.ctask').length`));
 await click('Уведомления'); await wait(800); await ev("[...document.querySelectorAll('button')].find(b=>b.textContent.startsWith('Список')).click()"); await wait(600); await ev("document.querySelector('tbody tr, .tcard .ttitle, td a, td button')?.click()"); await wait(800); console.log('NOTES:', await text());
