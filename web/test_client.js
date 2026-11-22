@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { projectBar, dependencyLinks, METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { metricsCsv, projectBar, dependencyLinks, METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -252,6 +252,15 @@ await test('api reference: rows from an OpenAPI document, mutation flag, groupin
   assert.equal(rows[1].mutating, false); assert.deepEqual(rows[1].params, ['task_id (path, обязательный)']); assert.deepEqual(rows[1].codes, ['200', '404']);
   assert.deepEqual(groupByArea(rows).map(([a, r]) => [a, r.length]), [['auth', 1], ['tasks', 2]]);
   assert.deepEqual(apiDocRows({}), []); assert.deepEqual(apiDocRows(null), []);
+});
+
+await test('metrics csv: BOM, quoted cells, period and counters', () => {
+  const csv = metricsCsv({ created: 3, completed: 2, cancelled: 0, reopened: 1 }, { from: '2026-11-01', to: '2026-11-30' });
+  assert.ok(csv.startsWith('\ufeff'));
+  const lines = csv.slice(1).trim().split('\r\n');
+  assert.deepEqual(lines, ['"показатель","значение"', '"период с","2026-11-01"', '"период по","2026-11-30"',
+    '"Создано","3"', '"Завершено","2"', '"Отменено","0"', '"Открыто повторно","1"']);
+  assert.ok(metricsCsv({}, { from: 'a"b', to: '' }).includes('"a""b"'));            // quotes are doubled, nothing is executable
 });
 
 await test('service worker caches only GET shell files and never /api', async () => {
