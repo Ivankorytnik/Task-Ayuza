@@ -140,7 +140,7 @@ check('export without a grant shows the access message', await until("document.b
 await click('Kanban');
 check('kanban cards present', await until("document.querySelectorAll('.col[data-status=new] .tcard').length >= 1"));
 const before = await ev("document.querySelectorAll('.col[data-status=planned] .tcard').length");
-await ev(`(() => { const card = document.querySelector('.col[data-status=new] .tcard'); const col = document.querySelector('.col[data-status=planned]');
+await ev(`(() => { const card = [...document.querySelectorAll('.col[data-status=new] .tcard')].find((e) => e.querySelector('.ttitle').textContent.trim() === 'Синтетическая задача 1'); const col = document.querySelector('.col[data-status=planned]');
   const dt = new DataTransfer();
   card.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
   col.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
