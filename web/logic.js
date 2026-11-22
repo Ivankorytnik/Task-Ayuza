@@ -270,6 +270,13 @@ export const filtersActive = (f) => Boolean(f && (f.mine || f.overdue || f.block
 export const METRIC_LABELS = [['created', 'Создано'], ['completed', 'Завершено'], ['cancelled', 'Отменено'], ['reopened', 'Открыто повторно']];
 export const MAX_PERIOD_DAYS = 366;
 
+// CSV of the counters already shown to the user (only tasks they may read). Labels are ours, values are numbers.
+export function metricsCsv(metrics, period) {
+  const lines = [['показатель', 'значение'], ['период с', period.from], ['период по', period.to],
+    ...METRIC_LABELS.map(([key, text]) => [text, String(Number(metrics[key]) || 0)])];
+  return '\ufeff' + lines.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n') + '\r\n';
+}
+
 // The default period ends on the workspace-local "today" (from the directory) and covers the last `days` days.
 export function defaultPeriod(today, days) {
   if (!hasDate(today)) return { from: '', to: '' };

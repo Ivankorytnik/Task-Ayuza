@@ -1,5 +1,5 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, projectBar, dependencyLinks, MAX_DEP_TASKS, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, metricsCsv, projectBar, dependencyLinks, MAX_DEP_TASKS, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
@@ -279,7 +279,8 @@ function metricsView() {
   h('strong', {}, 'За период'),
   h('input', { name: 'from', value: state.period.from, maxlength: 10, 'aria-label': 'С' }), h('input', { name: 'to', value: state.period.to, maxlength: 10, 'aria-label': 'По' }),
   h('button', { type: 'submit' }, 'Показать'),
-  state.metrics ? METRIC_LABELS.map(([key, text]) => h('span', { class: 'snapitem' }, `${text}: `, h('strong', {}, String(state.metrics[key])))) : '');
+  state.metrics ? METRIC_LABELS.map(([key, text]) => h('span', { class: 'snapitem' }, `${text}: `, h('strong', {}, String(state.metrics[key])))) : '',
+  state.metrics ? h('button', { type: 'button', on: { click: () => download({ text: metricsCsv(state.metrics, state.period), name: `metrics_${state.period.from}_${state.period.to}.csv` }) } }, 'Выгрузить метрики CSV') : '');
   return form;
 }
 

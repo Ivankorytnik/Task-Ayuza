@@ -49,6 +49,14 @@ check('signed in (header with logout)', await until("[...document.querySelectorA
 check('workspace tasks listed', await until("document.body.innerText.includes('Синтетическая задача 1')"), (await text()).slice(0, 300));
 check('snapshot shown', (await text()).includes('Всего'));
 
+// metrics export: capture the generated file instead of downloading it
+await ev("window.__blobs = []; const orig = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return orig(b); }; true");
+await click('Показать');
+check('metrics export button is shown', await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выгрузить метрики CSV')"), (await text()).slice(0, 300));
+await click('Выгрузить метрики CSV');
+check('metrics csv holds the period and the counters', await until("window.__blobs.length === 1"));
+check('metrics csv content is correct', await ev("window.__blobs[0].text().then((t) => t.includes('\"Создано\",\"') && t.includes('\"период с\"') && t.includes('\"Завершено\"'))"));
+
 await fill('#ntitle', 'Задача из браузера');
 await ev("document.querySelector('#ntitle').form.querySelector('button[type=submit]').click()");
 check('created task appears in the list', await until("document.body.innerText.includes('Задача из браузера')"), (await text()).slice(0, 300));
