@@ -110,6 +110,7 @@ await signOut();
 // export without the grant, drag and drop in Kanban, loss of network
 await signIn(user.login, user.password);
 check('signed in again for the export and network checks', await loggedIn());
+await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выгрузить CSV')");
 await click('Выгрузить CSV');
 check('export without a grant shows the access message', await until("document.body.innerText.includes('Выгрузка требует права')"), (await text()).slice(0, 300));
 await click('Kanban');

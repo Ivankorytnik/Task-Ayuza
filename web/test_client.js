@@ -197,6 +197,11 @@ await test('offline: network failure becomes ApiError 0 with a clear message', a
   await assert.rejects(() => api.me(), (e) => e.status === 0 && /Нет связи/.test(e.message));
 });
 
+await test('offline: export failure also becomes ApiError 0', async () => {
+  const api = new Api(async () => { throw new TypeError('Failed to fetch'); });
+  await assert.rejects(() => api.exportTasks('w', 'csv'), (e) => e.status === 0 && /Нет связи/.test(e.message));
+});
+
 await test('service worker caches only GET shell files and never /api', async () => {
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(new URL('./sw.js', import.meta.url), 'utf8');
