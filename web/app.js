@@ -3,10 +3,12 @@ import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, group
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
-const state = { user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
+const fresh = () => ({ user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null, risks: [], snap: null, period: { from: '', to: '' }, metrics: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() };
-const api = new Api((...args) => fetch(...args), () => { state.user = null; state.phase = 'login'; render(); });
+  blockers: [], deps: null, risks: [], snap: null, period: { from: '', to: '' }, metrics: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() });
+const state = fresh();
+function clearSession() { Object.assign(state, fresh()); }       // nothing of the previous user may stay in memory
+const api = new Api((...args) => fetch(...args), () => { clearSession(); render(); });
 let pendingKey = null;                                  // one client_key per creation attempt, kept until it succeeds
 
 function h(tag, attrs = {}, ...children) {
@@ -401,7 +403,7 @@ function render() {
   root.append(h('header', {}, h('div', { class: 'brand' }, 'Task-Ayuza'), h('span', {}, state.user.display_name),
     h('button', { on: { click: async () => { try { await api.logout(); } catch { /* the session may already be gone */ }
       try { await api.bootstrap(); } catch { /* a new pre-login token is needed for the next sign-in */ }
-      state.user = null; state.phase = 'login'; state.tasks = []; state.selected = null; render(); } } }, 'Выйти')),
+      clearSession(); render(); } } }, 'Выйти')),
   h('main', {}, mainView()));
 }
 

@@ -107,6 +107,33 @@ await click('Записать проверку');
 check('passing check with evidence turns the light green', await until("document.body.innerText.includes('Зелёный: проверено')"), (await text()).slice(0, 400));
 await signOut();
 
+// export without the grant, drag and drop in Kanban, loss of network
+await signIn(user.login, user.password);
+check('signed in again for the export and network checks', await loggedIn());
+check('nothing of the previous user is left on screen after a new sign-in', await ev("!document.body.innerText.includes('Синтетический риск e2e')"));
+await click('Список');
+await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выгрузить CSV')");
+await click('Выгрузить CSV');
+check('export without a grant shows the access message', await until("document.body.innerText.includes('Выгрузка требует права')"), (await text()).slice(0, 300));
+await click('Kanban');
+check('kanban cards present', await until("document.querySelectorAll('.col[data-status=new] .tcard').length >= 1"));
+const before = await ev("document.querySelectorAll('.col[data-status=planned] .tcard').length");
+await ev(`(() => { const card = document.querySelector('.col[data-status=new] .tcard'); const col = document.querySelector('.col[data-status=planned]');
+  const dt = new DataTransfer();
+  card.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+  col.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  col.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })); })()`);
+check('drag and drop moved the card to planned', await until(`document.querySelectorAll('.col[data-status=planned] .tcard').length === ${before + 1}`), (await text()).slice(0, 300));
+await send('Network.enable');
+await send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+await click('Выгрузить JSON');
+check('offline: the client shows a no-connection message and stays alive', await until("document.body.innerText.includes('Нет связи')"), (await text()).slice(0, 300));
+check('offline: nothing is stored on the device', await ev("localStorage.length === 0 && sessionStorage.length === 0"));
+await send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+await click('Выгрузить JSON');
+check('back online: the client works again', await until("document.body.innerText.includes('Выгрузка требует права')"), (await text()).slice(0, 300));
+await signOut();
+
 // mobile: narrow touch screen, no sideways page scroll, controls reachable
 await send('Emulation.setDeviceMetricsOverride', { width: 360, height: 740, deviceScaleFactor: 2, mobile: true });
 await send('Emulation.setTouchEmulationEnabled', { enabled: true });

@@ -319,8 +319,11 @@ export class Api {
     const body = { format }; if (status) body.status = status;
     const headers = { Accept: '*/*', 'Content-Type': 'application/json' };
     if (this.csrf) headers['X-CSRF-Token'] = this.csrf;
-    const res = await this.fetch(`/api/v1/workspaces/${ws}/exports`, { method: 'POST', headers, credentials: 'same-origin',
-      cache: 'no-store', body: JSON.stringify(body) });
+    let res;
+    try {
+      res = await this.fetch(`/api/v1/workspaces/${ws}/exports`, { method: 'POST', headers, credentials: 'same-origin',
+        cache: 'no-store', body: JSON.stringify(body) });
+    } catch { throw new ApiError(0); }            // offline or unreachable
     if (!res.ok) { if (res.status === 401) this.onAuthLost(); throw new ApiError(res.status); }
     return { text: await res.text(), rows: Number(res.headers.get('X-Export-Row-Count') || 0), name: `tasks.${format}` };
   }
