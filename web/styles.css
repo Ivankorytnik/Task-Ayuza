@@ -48,3 +48,12 @@ tr.row{cursor:pointer}tr.row:hover,tr.row.on{background:#eef4fd}
 .gscroll{overflow-x:auto}.axis .tick{position:absolute;top:0;font-size:11px;white-space:nowrap}.axis .gtrack{height:18px;background:none}
 .gtoday{position:absolute;top:0;bottom:0;width:2px;background:#c0504d;z-index:1}.gbar.late{outline:2px solid #c0504d}
 .ggroup h3{font-size:13px;margin:12px 0 4px}
+
+@media (max-width:640px){
+  main{padding:8px 8px 20px}
+  header{padding:8px 10px}
+  button,select,input{min-height:36px}
+  button{padding:8px 12px}
+  th,td{padding:8px 6px}
+  .login{margin:24px auto}
+}

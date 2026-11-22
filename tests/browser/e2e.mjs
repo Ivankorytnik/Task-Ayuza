@@ -107,6 +107,29 @@ await click('Записать проверку');
 check('passing check with evidence turns the light green', await until("document.body.innerText.includes('Зелёный: проверено')"), (await text()).slice(0, 400));
 await signOut();
 
+// mobile: narrow touch screen, no sideways page scroll, controls reachable
+await send('Emulation.setDeviceMetricsOverride', { width: 360, height: 740, deviceScaleFactor: 2, mobile: true });
+await send('Emulation.setTouchEmulationEnabled', { enabled: true });
+await send('Page.navigate', { url: `${base}/app/` });
+check('mobile: login form shown', await until("!!document.querySelector('#login')"));
+const fits = () => ev("document.documentElement.scrollWidth <= window.innerWidth + 1");
+const overflow = () => ev("(() => { const w = window.innerWidth; return [...document.querySelectorAll('body *')].filter((e) => e.getBoundingClientRect().right > w + 1 && !e.closest('.gantt,.gscroll,.scroll')).slice(0, 4).map((e) => e.tagName + '.' + e.className + ' ' + Math.round(e.getBoundingClientRect().right)).join(' | '); })()");
+check('mobile: login fits the screen', await fits(), await overflow());
+await signIn(user.login, user.password);
+check('mobile: signed in', await loggedIn());
+for (const tab of ['Список', 'Kanban', 'Гант', 'Календарь', 'Уведомления', 'Риски']) {
+  await click(tab);
+  await new Promise((r) => setTimeout(r, 400));
+  check(`mobile: tab ${tab} fits the screen`, await fits(), await overflow());
+}
+await click('Список');
+await until("[...document.querySelectorAll('td')].some((e) => e.textContent.trim() === 'Синтетическая задача 1')");
+await ev("[...document.querySelectorAll('td')].find((e) => e.textContent.trim() === 'Синтетическая задача 1')?.click()");
+check('mobile: card opens', await until("document.body.innerText.includes('Блокеры и зависимости')"));
+check('mobile: card fits the screen', await fits(), await overflow());
+check('mobile: buttons are at least 32px tall', await ev("[...document.querySelectorAll('button')].every((b) => b.getBoundingClientRect().height >= 32)"));
+await signOut();
+
 console.log(steps.join('\n'));
 ch.kill();
 if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
