@@ -50,7 +50,7 @@ check('workspace tasks listed', await until("document.body.innerText.includes('�
 check('snapshot shown', (await text()).includes('Всего'));
 
 // metrics export: capture the generated file instead of downloading it
-await ev("window.__blobs = []; const orig = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return orig(b); }; true");
+await ev("(() => { window.__blobs = []; if (!window.__origBlobUrl) window.__origBlobUrl = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return window.__origBlobUrl(b); }; return true; })()");
 await click('Показать');
 check('metrics export button is shown', await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выгрузить метрики CSV')"), (await text()).slice(0, 300));
 await click('Выгрузить метрики CSV');
@@ -175,7 +175,7 @@ await signOut();
 await signIn(user.exporter.login, user.exporter.password);
 check('exporter signed in', await loggedIn());
 execFileSync('python', ['tests/e2e/mark_mfa.py', user.exporter.id], { stdio: 'inherit' });
-await ev("window.__blobs = []; const orig = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return orig(b); }; true");
+await ev("(() => { window.__blobs = []; if (!window.__origBlobUrl) window.__origBlobUrl = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return window.__origBlobUrl(b); }; return true; })()");
 await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выгрузить CSV')");
 await click('Выгрузить CSV');
 check('csv export produces a file', await until("window.__blobs.length === 1"), String(await ev('window.__blobs.length')));
