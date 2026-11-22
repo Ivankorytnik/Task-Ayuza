@@ -222,6 +222,17 @@ export function projectBar(project, min, span) {
   return { left, width: Math.max(right - left, 0.5) };
 }
 
+// Moving a Gantt bar: pixel shift to whole days, and the new dates (only dates the task already has are moved)
+export const dragDays = (dx, trackPx, span) => (trackPx > 0 && span > 0 && Number.isFinite(dx) ? Math.round(dx / trackPx * span) : 0);
+const addDays = (iso, n) => new Date((dayNumber(iso) + n) * DAY).toISOString().slice(0, 10);
+export function shiftDates(task, days) {
+  if (!days || !Number.isInteger(days)) return {};
+  const changes = {};
+  if (hasDate(task.start_date)) changes.start_date = addDays(task.start_date, days);
+  if (hasDate(task.due_date)) changes.due_date = addDays(task.due_date, days);
+  return changes;
+}
+
 // Stage bars of one project on the shared Gantt scale; stages without both dates or outside the visible range are skipped
 export const MAX_STAGE_PROJECTS = 20;
 export function stageBars(stages, min, span) {

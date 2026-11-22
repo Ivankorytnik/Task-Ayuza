@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { metricsCsv, projectBar, stageBars, dependencyLinks, METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { metricsCsv, projectBar, stageBars, dragDays, shiftDates, dependencyLinks, METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -250,6 +250,15 @@ await test('stage bars: dated stages only, clipping, bad input', () => {
   assert.deepEqual([bars[0].left, bars[0].width, bars[0].title], [25, 25, 'Анализ']);
   assert.equal(bars[1].left, 0); assert.equal(bars[1].title, 'Этап');
   assert.deepEqual(stageBars(undefined, day(1), 20), []); assert.deepEqual(stageBars(null, day(1), 20), []);
+});
+
+await test('bar drag: pixels to whole days, dates move together, single date, no-op', () => {
+  assert.equal(dragDays(50, 500, 20), 2); assert.equal(dragDays(-50, 500, 20), -2); assert.equal(dragDays(10, 500, 20), 0);
+  assert.equal(dragDays(10, 0, 20), 0); assert.equal(dragDays(NaN, 500, 20), 0);
+  assert.deepEqual(shiftDates({ start_date: '2026-01-30', due_date: '2026-02-02' }, 3), { start_date: '2026-02-02', due_date: '2026-02-05' });
+  assert.deepEqual(shiftDates({ start_date: null, due_date: '2026-03-01' }, -1), { due_date: '2026-02-28' });
+  assert.deepEqual(shiftDates({ start_date: '2026-03-01', due_date: '2026-03-02' }, 0), {});
+  assert.deepEqual(shiftDates({ start_date: null, due_date: null }, 2), {});
 });
 
 await test('api: stages request path', async () => {

@@ -40,6 +40,7 @@ tr.row{cursor:pointer}tr.row:hover,tr.row.on{background:#eef4fd}
 .light.gray{background:#c9ced6}.light.green{background:#7ed39a}.light.yellow{background:#f5d76e}.light.red{background:#f08a8a}
 .gantt .grow{display:flex;align-items:center;gap:8px;margin-bottom:6px}.glabel{width:200px;flex:none;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gtrack{position:relative;flex:1;height:18px;background:#e9eef5;border-radius:4px}.gbar{position:absolute;top:2px;bottom:2px;background:#1f3a5f;border-radius:3px}
+.gbar{cursor:grab}
 .gbar.done{background:#4c9a6a}.gbar.blocked{background:#c0504d}.gbar.cancelled{background:#8a8f98}
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}.chead{font-weight:bold;font-size:12px;text-align:center}
 .cell{min-height:72px;background:#e9eef5;border-radius:4px;padding:4px;font-size:12px}.ctask{background:#fff;border-radius:3px;margin-top:2px;padding:1px 4px;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}

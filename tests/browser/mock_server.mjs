@@ -5,6 +5,8 @@ const J=(res,o)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end
 const task=(i,st)=>({id:'t'+i,title:'Задача '+i,status:st,priority:'normal',version:1,project_id:i===1?'p1':null,start_date:i===1?'2026-11-10':null,due_date:i===3?null:'2026-11-'+(10+i*5),description:''});
 http.createServer((req,res)=>{
   const u=req.url.split('?')[0];
+  if(req.method==='PATCH'){let b='';req.on('data',(c)=>b+=c);req.on('end',()=>{globalThis.lastPatch={url:u,body:b};J(res,{id:u.split('/').pop(),version:2,changed:true});});return;}
+  if(u==='/__last')return J(res,globalThis.lastPatch||null);
   if(u.startsWith('/app/')||u==='/app'){const f=path.join(WEB,u==='/app/'||u==='/app'?'index.html':u.slice(5));
     const t={'.js':'text/javascript','.html':'text/html','.css':'text/css'}[path.extname(f)]||'application/octet-stream';
     res.writeHead(200,{'Content-Type':t,'Content-Security-Policy':csp});return res.end(fs.readFileSync(f));}
