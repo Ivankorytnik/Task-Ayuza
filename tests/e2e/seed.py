@@ -17,6 +17,19 @@ from backend.exports import ExportsService  # noqa: E402
 from test_m01_acl import Who, _ip, world  # noqa: E402
 from test_m01_auth import PASSWORD, user  # noqa: E402
 from test_m02_work import join, new_task  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+NEW_PASSWORD = 'Synthetic другой пароль 4712!'
+
+
+def sign_in_as(service, login, password):
+    pre = service.prelogin(ip=_ip())
+    return service.login(login, password, _ip(), pre['token'], pre['csrf_token'])
+
+
+def execute_sql(engine, statement, **params):
+    with engine.begin() as c:
+        execute(c, statement, **params)
 
 
 def main():
@@ -39,9 +52,21 @@ def main():
     me = Who(uid, sign_in(PASSWORD))
     w = world(service, acl, migrator)
     join(acl, w, me)
+    # a user who still has the temporary password: the browser must change it
+    t_uid, t_login, t_temporary = user(service)
+    join(acl, w, SimpleNamespace(id=t_uid))
+    # a risk controller with a normal password (role through the migrator, like the acceptance tests)
+    c_uid, c_login, c_temporary = user(service)
+    c_first = sign_in_as(service, c_login, c_temporary)
+    service.change_password(c_first['token'], c_first['csrf_token'], PASSWORD)
+    execute_sql(migrator, "INSERT INTO task_ayuza.system_role_assignments (id, user_id, role_code, reason) "
+                          "VALUES (:id, :u, 'risk_controller', 'synthetic e2e')", id=uuid.uuid4(), u=c_uid)
+    join(acl, w, SimpleNamespace(id=c_uid))
     for title in ('Синтетическая задача 1', 'Синтетическая задача 2'):
         new_task(work, me, w, title=title)
-    print(json.dumps({'login': login, 'password': PASSWORD, 'workspace': str(w.ws)}))
+    print(json.dumps({'login': login, 'password': PASSWORD, 'workspace': str(w.ws),
+                      'temp': {'login': t_login, 'temporary': t_temporary, 'new_password': NEW_PASSWORD},
+                      'controller': {'login': c_login, 'password': PASSWORD, 'id': str(c_uid)}}))
 
 
 if __name__ == '__main__':

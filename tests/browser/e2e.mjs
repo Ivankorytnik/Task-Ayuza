@@ -1,6 +1,7 @@
 // Browser E2E against the real backend. Usage: node tests/browser/e2e.mjs <base-url> <user.json>
 // Needs google-chrome. Synthetic data only. Exits 1 on a CSP violation, a page exception or a missing element.
 import { spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const [base, userFile] = process.argv.slice(2);
@@ -32,6 +33,13 @@ const click = (t) => ev(`(() => { const b = [...document.querySelectorAll('butto
 const until = async (expr, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await ev(expr)) return true; await wait(250); } return false; };
 const fill = (selector, value) => ev(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; el.value = ${JSON.stringify(value)}; return true; })()`);
 
+const signIn = async (login, password) => {
+  await fill('#login', login); await fill('#password', password); await click('Войти');
+};
+const signOut = async () => { await click('Выйти'); return until("!!document.querySelector('#login')"); };
+const loggedIn = () => until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выйти')");
+const setSelect = (selector, value) => ev(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+
 await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
 await send('Page.navigate', { url: `${base}/app/` });
 check('login form shown', await until("!!document.querySelector('#login')"));
@@ -53,10 +61,51 @@ for (const [tab, marker] of [['Kanban', 'Перенести'], ['Гант', 'Н�
 }
 await click('Риски');
 check('risk centre says access is for the controller only (no role)', await until("document.body.innerText.includes('только контролёру рисков')"));
+
+// blocker: create in the card, then resolve it
 await click('Список');
-await ev("document.querySelector('#fmine') && (document.querySelector('#fmine').click(), true)");
-await click('Выйти');
-check('signed out (login form again)', await until("!!document.querySelector('#login')"));
+await ev("[...document.querySelectorAll('td')].find((e) => e.textContent.trim() === 'Синтетическая задача 2')?.click()");
+check('card of task 2 opens', await until("document.body.innerText.includes('Блокеры и зависимости') && !!document.querySelector('#btitle')"));
+await fill('#btitle', 'Ждём ответ e2e');
+await ev("document.querySelector('#btitle').form.querySelector('button[type=submit]').click()");
+check('blocker created', await until("document.body.innerText.includes('Ждём ответ e2e') && document.body.innerText.includes('активен')"), (await text()).slice(-300));
+await click('Снять блокер');
+check('blocker resolved', await until("document.body.innerText.includes('снят') && [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Вернуть блокер')"));
+
+// Kanban: move through the status select
+await click('Kanban');
+check('kanban shows task cards', await until("document.querySelectorAll('.tcard').length >= 2"));
+await ev("(() => { const sel = document.querySelector('.col[data-status=new] .tcard select'); sel.value = 'in_progress'; sel.dispatchEvent(new Event('change', { bubbles: true })); })()");
+check('task moved to in_progress column', await until("document.querySelectorAll('.col[data-status=in_progress] .tcard').length === 1"));
+await click('Список');
+await signOut();
+
+// temporary password: forced change in the browser
+await signIn(user.temp.login, user.temp.temporary);
+check('password change screen shown', await until("document.body.innerText.includes('Новый пароль') && !!document.querySelector('#next')"), (await text()).slice(0, 200));
+await fill('#next', user.temp.new_password); await fill('#again', user.temp.new_password);
+await click('Сохранить и войти');
+check('signed in after the password change', await loggedIn(), (await text()).slice(0, 300));
+check('signing out after a password change works', await signOut());
+await signIn(user.temp.login, user.temp.new_password);
+check('new password works for a fresh sign-in', await loggedIn());
+await signOut();
+
+// risk controller: fresh MFA is a fixture here (the browser has no authenticator)
+await signIn(user.controller.login, user.controller.password);
+check('controller signed in', await loggedIn());
+execFileSync('python', ['tests/e2e/mark_mfa.py', user.controller.id], { stdio: 'inherit' });
+await click('Риски');
+check('risk centre opens for the controller', await until("document.body.innerText.includes('Новый риск') && !!document.querySelector('#rdesc')"), (await text()).slice(0, 300));
+await setSelect('#rcat', 'backup'); await fill('#rdesc', 'Синтетический риск e2e');
+await ev("document.querySelector('#rdesc').form.querySelector('button[type=submit]').click()");
+check('risk created and gray by default', await until("document.body.innerText.includes('Синтетический риск e2e') && document.body.innerText.includes('Серый: не проверено')"), (await text()).slice(0, 400));
+const valid = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+await setSelect('select[name=result]', 'pass');
+await fill('input[name=evidence]', 'отчёт e2e'); await fill('input[name=valid_until]', valid);
+await click('Записать проверку');
+check('passing check with evidence turns the light green', await until("document.body.innerText.includes('Зелёный: проверено')"), (await text()).slice(0, 400));
+await signOut();
 
 console.log(steps.join('\n'));
 ch.kill();
