@@ -171,6 +171,20 @@ await click('Выгрузить JSON');
 check('back online: the client works again', await until("document.body.innerText.includes('Выгрузка требует права')"), (await text()).slice(0, 300));
 await signOut();
 
+// export with the grant: the exporter signs in, fresh MFA is a fixture, the generated files are captured
+await signIn(user.exporter.login, user.exporter.password);
+check('exporter signed in', await loggedIn());
+execFileSync('python', ['tests/e2e/mark_mfa.py', user.exporter.id], { stdio: 'inherit' });
+await ev("window.__blobs = []; const orig = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return orig(b); }; true");
+await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выгрузить CSV')");
+await click('Выгрузить CSV');
+check('csv export succeeds and reports the rows', await until("window.__blobs.length === 1 && document.body.innerText.includes('Выгружено строк')"), (await text()).slice(0, 300));
+check('csv holds the exporter task', await ev("window.__blobs[0].text().then((t) => t.includes('Задача экспорта'))"));
+await click('Выгрузить JSON');
+check('json export succeeds', await until("window.__blobs.length === 2"));
+check('json is valid and holds the task', await ev("window.__blobs[1].text().then((t) => { const d = JSON.parse(t); return JSON.stringify(d).includes('Задача экспорта'); })"));
+await signOut();
+
 // API reference page: rendered from the service's own openapi.json under the same CSP
 await send('Page.navigate', { url: `${base}/app/api.html` });
 check('api reference lists the login endpoint', await until("document.body.innerText.includes('POST /api/v1/auth/login')"), (await text()).slice(0, 300));

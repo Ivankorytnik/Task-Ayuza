@@ -17,7 +17,7 @@ from backend.auth import AuthService, execute  # noqa: E402
 from backend.exports import ExportsService  # noqa: E402
 from test_m01_acl import Who, _ip, world  # noqa: E402
 from test_m01_auth import PASSWORD, user  # noqa: E402
-from test_m02_work import join, new_task  # noqa: E402
+from test_m02_work import grant, join, new_task  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
 NEW_PASSWORD = 'Synthetic другой пароль 4712!'
@@ -63,6 +63,14 @@ def main():
     execute_sql(migrator, "INSERT INTO task_ayuza.system_role_assignments (id, user_id, role_code, reason) "
                           "VALUES (:id, :u, 'risk_controller', 'synthetic e2e')", id=uuid.uuid4(), u=c_uid)
     join(acl, w, SimpleNamespace(id=c_uid))
+    # a user with the export grant (the fresh MFA is marked after the browser signs in, see mark_mfa.py)
+    x_uid, x_login, x_temporary = user(service)
+    x_first = sign_in_as(service, x_login, x_temporary)
+    service.change_password(x_first['token'], x_first['csrf_token'], PASSWORD)
+    exporter = Who(x_uid, sign_in_as(service, x_login, PASSWORD))
+    join(acl, w, exporter)
+    grant(migrator, exporter, w.ws, 'export', w.admin)
+    new_task(work, exporter, w, title='Задача экспорта')
     for title in ('Синтетическая задача 1', 'Синтетическая задача 2'):
         new_task(work, me, w, title=title)
     # two dated tasks with a dependency for the Gantt connectors (dates are relative to today, so the check does not rot)
@@ -73,7 +81,8 @@ def main():
     work.add_dependency(me.token, me.csrf, first['id'], second['id'], 'B после A')
     print(json.dumps({'login': login, 'password': PASSWORD, 'workspace': str(w.ws),
                       'temp': {'login': t_login, 'temporary': t_temporary, 'new_password': NEW_PASSWORD},
-                      'controller': {'login': c_login, 'password': PASSWORD, 'id': str(c_uid)}}))
+                      'controller': {'login': c_login, 'password': PASSWORD, 'id': str(c_uid)},
+                      'exporter': {'login': x_login, 'password': PASSWORD, 'id': str(x_uid)}}))
 
 
 if __name__ == '__main__':
