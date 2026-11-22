@@ -218,7 +218,10 @@ function linksBlock(risk) {
     h('button', { type: 'button', on: { click: () => showRiskLinks(risk.id) } }, 'Связанные задачи'),
     links ? [links.tasks.map((t) => h('div', { class: 'comment' }, `${t.title} (${label(STATUSES, t.status)}) `,
       h('button', { type: 'button', on: { click: async () => { try { await api.linkRiskTask(risk.id, t.task_id, false); await showRiskLinks(risk.id); } catch (error) { fail(error); } } } }, 'Отвязать'))),
-    links.hidden_tasks ? h('div', { class: 'muted' }, `Скрытых связей: ${links.hidden_tasks}`) : '', pick] : '');
+    links.hidden_tasks ? h('div', { class: 'muted' }, `Скрытых связей: ${links.hidden_tasks}`) : '',
+    (links.blockers || []).map((b) => h('div', { class: 'comment' }, `Блокер: ${b.title || b.blocker_id} · ${b.status === 'resolved' ? 'снят' : 'активен'} `,
+      h('button', { type: 'button', on: { click: async () => { try { await api.linkRiskBlocker(risk.id, b.blocker_id, false); await showRiskLinks(risk.id); } catch (error) { fail(error); } } } }, 'Отвязать блокер'))),
+    links.hidden_blockers ? h('div', { class: 'muted' }, `Скрытых блокеров: ${links.hidden_blockers}`) : '', pick] : '');
 }
 
 async function showRiskLinks(id) {
@@ -338,7 +341,11 @@ function blockersView() {
   state.blockers.map((b) => h('div', { class: 'comment' }, h('strong', {}, b.title), ` · ${b.status === 'resolved' ? 'снят' : 'активен'}`,
     b.expected_resolution_date ? h('div', { class: 'muted' }, `Ожидаемый срок: ${b.expected_resolution_date}`) : '',
     h('button', { type: 'button', on: { click: async () => { try { await api.resolveBlocker(b.id, b.version, b.status !== 'resolved'); state.error = ''; await openTask(task.id); } catch (error) { if (error.status === 409) await openTask(task.id); fail(error); } } } },
-      b.status === 'resolved' ? 'Вернуть блокер' : 'Снять блокер'))),
+      b.status === 'resolved' ? 'Вернуть блокер' : 'Снять блокер'),
+    state.risks.length ? h('select', { 'aria-label': 'Связать блокер с риском', on: { change: async (e) => {
+      if (!e.target.value) return;
+      try { await api.linkRiskBlocker(e.target.value, b.id, true); state.error = ''; state.message = 'Блокер связан с риском.'; delete state.riskLinks[e.target.value]; render(); } catch (error) { fail(error); }
+    } } }, [h('option', { value: '' }, 'Связать с риском…'), ...state.risks.map((r) => h('option', { value: r.id }, r.description.slice(0, 40)))]) : '')),
   state.deps ? [state.deps.edges.map((e) => h('div', { class: 'comment' }, e.direction === 'blocked_by' ? 'Зависит от: ' : 'Блокирует: ', e.title, ` (${label(STATUSES, e.status)})`,
     h('button', { type: 'button', on: { click: async () => { try { await api.removeDependency(e.id, e.version, 'Убрано из карточки'); state.error = ''; await openTask(task.id); } catch (error) { if (error.status === 409) await openTask(task.id); fail(error); } } } }, 'Убрать'))),
     state.deps.hidden_external ? h('div', { class: 'muted' }, `Скрытых внешних зависимостей: ${state.deps.hidden_external}`) : ''] : '',

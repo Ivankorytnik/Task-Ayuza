@@ -126,6 +126,7 @@ def test_i03_links_are_read_by_each_sides_own_rights(service, acl, risks, w, mig
     b = risks.create_blocker(a.token, a.csrf, t, 'Synthetic blocker', responsible_user_id=a.id)['id']
     assert risks.set_risk_blocker_link(c1.token, c1.csrf, r, b, True)['changed'] is True
     assert [x['blocker_id'] for x in risks.list_risk_links(c1.token, r)['blockers']] == [b]
+    assert all(x['title'] for x in risks.list_risk_links(c1.token, r)['blockers'])                     # the list shows the title to who may read the task
     assert risks.list_risk_links(c2.token, r)['hidden_blockers'] == 1
     # access withdrawn: the next read hides both sides
     risks.set_task_access(a.token, a.csrf, t, c1.id, 'read', False, 'done', expected_version=grant['version'])

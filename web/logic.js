@@ -331,6 +331,7 @@ export class Api {
   addDependency(payload) { return this.request('POST', '/api/v1/dependencies', payload, true); }
   removeDependency(id, version, reason) { return this.request('POST', `/api/v1/dependencies/${id}/remove`, { expected_version: version, reason }, true); }
   riskLinks(id) { return this.request('GET', `/api/v1/risks/${id}/links`); }
+  linkRiskBlocker(riskId, blockerId, linked) { return this.request('PUT', `/api/v1/risks/${riskId}/blockers/${blockerId}`, { linked }, true); }
   linkRiskTask(riskId, taskId, linked) { return this.request('PUT', `/api/v1/risks/${riskId}/tasks/${taskId}`, { linked }, true); }
   metrics(ws, from, to) { return this.request('GET', `/api/v1/workspaces/${ws}/metrics?${new URLSearchParams({ from, to })}`); }
   snapshot(ws, includeSubtasks) { return this.request('GET', `/api/v1/workspaces/${ws}/snapshot?include_subtasks=${includeSubtasks ? 'true' : 'false'}`); }

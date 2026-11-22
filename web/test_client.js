@@ -202,6 +202,17 @@ await test('offline: export failure also becomes ApiError 0', async () => {
   await assert.rejects(() => api.exportTasks('w', 'csv'), (e) => e.status === 0 && /Нет связи/.test(e.message));
 });
 
+await test('risk and blocker link goes through PUT with CSRF', async () => {
+  const calls = [];
+  const api = new Api(async (url, init) => { calls.push([url, init]); return { ok: true, status: 200, json: async () => ({}) }; });
+  api.csrf = 'tok';
+  await api.linkRiskBlocker('r1', 'b1', true);
+  assert.equal(calls[0][0], '/api/v1/risks/r1/blockers/b1');
+  assert.equal(calls[0][1].method, 'PUT');
+  assert.equal(calls[0][1].headers['X-CSRF-Token'], 'tok');
+  assert.deepEqual(JSON.parse(calls[0][1].body), { linked: true });
+});
+
 await test('service worker caches only GET shell files and never /api', async () => {
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(new URL('./sw.js', import.meta.url), 'utf8');
