@@ -51,6 +51,7 @@ check('snapshot shown', (await text()).includes('Всего'));
 
 // metrics export: capture the generated file instead of downloading it
 await ev("window.__blobs = []; const orig = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return orig(b); }; true");
+await click('Показать');
 check('metrics export button is shown', await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выгрузить метрики CSV')"), (await text()).slice(0, 300));
 await click('Выгрузить метрики CSV');
 check('metrics csv holds the period and the counters', await until("window.__blobs.length === 1"));
