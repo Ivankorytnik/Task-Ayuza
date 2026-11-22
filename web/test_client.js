@@ -240,6 +240,20 @@ await test('project bar: scale position, clipping and missing dates', () => {
   assert.equal(projectBar({ start_date: '2026-01-06', due_date: '2026-01-10' }, min, 0), null);
 });
 
+await test('api reference: rows from an OpenAPI document, mutation flag, grouping', async () => {
+  const { apiDocRows, groupByArea } = await import('./apidocs.js');
+  const spec = { paths: {
+    '/api/v1/tasks/{task_id}': { get: { summary: 'Read', parameters: [{ name: 'task_id', in: 'path', required: true }], responses: { 200: {}, 404: {} } },
+      delete: { responses: { 204: {} } } },
+    '/api/v1/auth/login': { post: { operationId: 'login', requestBody: {}, responses: { 200: {}, 401: {} } } } } };
+  const rows = apiDocRows(spec);
+  assert.deepEqual(rows.map((r) => `${r.method} ${r.path}`), ['POST /api/v1/auth/login', 'GET /api/v1/tasks/{task_id}', 'DELETE /api/v1/tasks/{task_id}']);
+  assert.equal(rows[0].mutating, true); assert.equal(rows[0].body, true); assert.equal(rows[0].summary, 'login');
+  assert.equal(rows[1].mutating, false); assert.deepEqual(rows[1].params, ['task_id (path, обязательный)']); assert.deepEqual(rows[1].codes, ['200', '404']);
+  assert.deepEqual(groupByArea(rows).map(([a, r]) => [a, r.length]), [['auth', 1], ['tasks', 2]]);
+  assert.deepEqual(apiDocRows({}), []); assert.deepEqual(apiDocRows(null), []);
+});
+
 await test('service worker caches only GET shell files and never /api', async () => {
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(new URL('./sw.js', import.meta.url), 'utf8');
