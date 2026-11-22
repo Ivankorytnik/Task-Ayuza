@@ -3,6 +3,7 @@ Run from the repository root against the disposable local-stack database; prints
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -11,7 +12,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 from sqlalchemy import create_engine  # noqa: E402
 
 from backend.acl import AclService  # noqa: E402
-from backend.auth import AuthService  # noqa: E402
+from backend.auth import AuthService, execute  # noqa: E402
 from backend.exports import ExportsService  # noqa: E402
 from test_m01_acl import Who, _ip, world  # noqa: E402
 from test_m01_auth import PASSWORD, user  # noqa: E402
@@ -23,6 +24,8 @@ def main():
     migrator = create_engine('postgresql+psycopg://task_ayuza_migrator:%s@%s:%s/task_ayuza_test' % (
         os.environ['TA_MIGRATOR_PW'], os.environ.get('TA_DB_HOST', '127.0.0.1'), os.environ.get('TA_DB_PORT', '5432')),
         hide_parameters=True)
+    with migrator.begin() as c:                                               # the acceptance runner does the same in its fixture
+        execute(c, "INSERT INTO task_ayuza.organization (id, name) VALUES (:id, 'Synthetic') ON CONFLICT DO NOTHING", id=uuid.uuid4())
     service = AuthService(runtime, bytes.fromhex(os.environ['TASK_AYUZA_AUTH_HMAC_KEY']))
     acl, work = AclService(service), ExportsService(service)
     uid, login, temporary = user(service)
