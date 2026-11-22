@@ -123,6 +123,7 @@ for (const tab of ['Список', 'Kanban', 'Гант', 'Календарь', '
   check(`mobile: tab ${tab} fits the screen`, await fits(), await overflow());
 }
 await click('Список');
+await until("[...document.querySelectorAll('td')].some((e) => e.textContent.trim() === 'Синтетическая задача 1')");
 await ev("[...document.querySelectorAll('td')].find((e) => e.textContent.trim() === 'Синтетическая задача 1')?.click()");
 check('mobile: card opens', await until("document.body.innerText.includes('Блокеры и зависимости')"));
 check('mobile: card fits the screen', await fits(), await overflow());
