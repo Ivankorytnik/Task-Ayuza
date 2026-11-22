@@ -55,12 +55,18 @@ check('created task appears in the list', await until("document.body.innerText.i
 await ev("[...document.querySelectorAll('td, .ttitle, a')].find((e) => e.textContent.trim() === 'Задача из браузера')?.click()");
 check('task card opens with blockers block', await until("document.body.innerText.includes('Карточка задачи') && document.body.innerText.includes('Блокеры и зависимости')"));
 
-for (const [tab, marker] of [['Kanban', 'Перенести'], ['Гант', 'Нет задач со сроками'], ['Календарь', 'Пн'], ['Уведомления', 'Уведомлений нет'], ['Список', 'Синтетическая задача 1']]) {
+for (const [tab, marker] of [['Kanban', 'Перенести'], ['Гант', 'Без дат'], ['Календарь', 'Пн'], ['Уведомления', 'Уведомлений нет'], ['Список', 'Синтетическая задача 1']]) {
   await click(tab);
   check(`tab ${tab}`, await until(`document.body.innerText.includes(${JSON.stringify(marker)})`), (await text()).slice(0, 200));
 }
 await click('Риски');
 check('risk centre says access is for the controller only (no role)', await until("document.body.innerText.includes('только контролёру рисков')"));
+
+// Gantt: dependency connector from A to B
+await click('Гант');
+check('gantt shows a dependency connector after the blocker', await until("[...document.querySelectorAll('.gdep')].some((e) => e.getAttribute('title') === 'После: Гант A' && !e.classList.contains('conflict'))"), (await text()).slice(0, 300));
+check('gantt connector has an arrow head', await ev("document.querySelectorAll('.garrow').length >= 1"));
+await click('Список');
 
 // blocker: create in the card, then resolve it
 await click('Список');
@@ -75,7 +81,7 @@ check('blocker resolved', await until("document.body.innerText.includes('сня�
 // Kanban: move through the status select
 await click('Kanban');
 check('kanban shows task cards', await until("document.querySelectorAll('.tcard').length >= 2"));
-await ev("(() => { const sel = document.querySelector('.col[data-status=new] .tcard select'); sel.value = 'in_progress'; sel.dispatchEvent(new Event('change', { bubbles: true })); })()");
+await ev("(() => { const sel = [...document.querySelectorAll('.col[data-status=new] .tcard')].find((e) => e.querySelector('.ttitle').textContent.trim() === 'Синтетическая задача 2').querySelector('select'); sel.value = 'in_progress'; sel.dispatchEvent(new Event('change', { bubbles: true })); })()");
 check('task moved to in_progress column', await until("document.querySelectorAll('.col[data-status=in_progress] .tcard').length === 1"));
 await click('Список');
 await signOut();

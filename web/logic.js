@@ -157,6 +157,24 @@ export function ganttRows(tasks) {
   return { rows: rows.map((r) => ({ task: r.task, left: ((r.from - min) / span) * 100, width: ((r.to - r.from + 1) / span) * 100 })), undated, span, min };
 }
 
+// Dependency connectors for the Gantt: all rows share one scale, so a blocker's end and a dependent's start are comparable
+export const MAX_DEP_TASKS = 60;
+export function dependencyLinks(rows, edgesByTask) {
+  const byId = new Map(rows.map((r) => [r.task.id, r]));
+  const out = {};
+  for (const r of rows) {
+    const links = [];
+    for (const e of edgesByTask[r.task.id] || []) {
+      const blocker = e.direction === 'blocked_by' ? byId.get(e.task_id) : null;
+      if (!blocker) continue;
+      const from = blocker.left + blocker.width; const to = r.left;
+      links.push({ from, to, left: Math.min(from, to), width: Math.max(Math.abs(to - from), 0.5), conflict: from > to, title: e.title });
+    }
+    if (links.length) out[r.task.id] = links;
+  }
+  return out;
+}
+
 export const OPEN = (task) => task.status !== 'done' && task.status !== 'cancelled';
 export const isOverdue = (task, today) => Boolean(today) && OPEN(task) && hasDate(task.due_date) && task.due_date < today;
 
