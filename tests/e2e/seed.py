@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import uuid
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,6 +65,11 @@ def main():
     join(acl, w, SimpleNamespace(id=c_uid))
     for title in ('Синтетическая задача 1', 'Синтетическая задача 2'):
         new_task(work, me, w, title=title)
+    # two dated tasks with a dependency for the Gantt connectors (dates are relative to today, so the check does not rot)
+    day = lambda n: (date.today() + timedelta(days=n)).isoformat()   # noqa: E731
+    first = new_task(work, me, w, title='Гант A', start_date=day(1), due_date=day(5))
+    second = new_task(work, me, w, title='Гант B', start_date=day(8), due_date=day(12))
+    work.add_dependency(me.token, me.csrf, first['id'], second['id'], 'B после A')
     print(json.dumps({'login': login, 'password': PASSWORD, 'workspace': str(w.ws),
                       'temp': {'login': t_login, 'temporary': t_temporary, 'new_password': NEW_PASSWORD},
                       'controller': {'login': c_login, 'password': PASSWORD, 'id': str(c_uid)}}))

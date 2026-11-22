@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { dependencyLinks, METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -211,6 +211,21 @@ await test('risk and blocker link goes through PUT with CSRF', async () => {
   assert.equal(calls[0][1].method, 'PUT');
   assert.equal(calls[0][1].headers['X-CSRF-Token'], 'tok');
   assert.deepEqual(JSON.parse(calls[0][1].body), { linked: true });
+});
+
+await test('dependency links: connector from the blocker end to the dependent start, conflict flagged', () => {
+  const rows = [{ task: { id: 'a' }, left: 0, width: 20 }, { task: { id: 'b' }, left: 30, width: 20 }, { task: { id: 'c' }, left: 10, width: 10 }];
+  const edges = { b: [{ direction: 'blocked_by', task_id: 'a', title: 'A' }], c: [{ direction: 'blocked_by', task_id: 'a', title: 'A' }, { direction: 'blocks', task_id: 'b', title: 'B' }],
+    a: [{ direction: 'blocks', task_id: 'b', title: 'B' }], z: [{ direction: 'blocked_by', task_id: 'q', title: 'Q' }] };
+  const out = dependencyLinks(rows, edges);
+  assert.deepEqual(Object.keys(out).sort(), ['b', 'c']);
+  assert.deepEqual(out.b, [{ from: 20, to: 30, left: 20, width: 10, conflict: false, title: 'A' }]);
+  assert.equal(out.c.length, 1);
+  assert.equal(out.c[0].conflict, true);
+  assert.equal(out.c[0].left, 10);
+  assert.deepEqual(dependencyLinks(rows, {}), {});
+  assert.ok(dependencyLinks([{ task: { id: 'a' }, left: 0, width: 10 }, { task: { id: 'b' }, left: 10, width: 5 }],
+    { b: [{ direction: 'blocked_by', task_id: 'a', title: 'A' }] }).b[0].width >= 0.5);       // touching bars still draw a visible connector
 });
 
 await test('service worker caches only GET shell files and never /api', async () => {

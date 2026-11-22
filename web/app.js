@@ -1,11 +1,11 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, dependencyLinks, MAX_DEP_TASKS, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const fresh = () => ({ user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null, risks: [], snap: null, period: { from: '', to: '' }, metrics: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() });
+  blockers: [], deps: null, ganttDeps: {}, risks: [], snap: null, period: { from: '', to: '' }, metrics: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() });
 const state = fresh();
 function clearSession() { Object.assign(state, fresh()); }       // nothing of the previous user may stay in memory
 const api = new Api((...args) => fetch(...args), () => { clearSession(); render(); });
@@ -288,7 +288,11 @@ function ganttView() {
   const today = state.dir ? state.dir.today : '';
   const width = `${trackWidth(g.span, state.scale)}px`;
   const marker = todayLeft(today, g.min, g.span);
+  const links = dependencyLinks(g.rows, state.ganttDeps);
   const track = (r) => h('div', { class: 'gtrack', css: { width } },
+    (links[r.task.id] || []).map((l) => [
+      h('div', { class: `gdep${l.conflict ? ' conflict' : ''}`, css: { left: `${l.left}%`, width: `${l.width}%` }, title: `${l.conflict ? 'Конфликт сроков: ' : 'После: '}${l.title}` }),
+      h('div', { class: `garrow${l.conflict ? ' conflict' : ''}`, css: { left: `${l.to}%` } })]),
     marker !== null && marker >= 0 && marker <= 100 ? h('div', { class: 'gtoday', css: { left: `${marker}%` } }) : '',
     h('div', { class: `gbar ${r.task.status}${isOverdue(r.task, today) ? ' late' : ''}`, css: { left: `${r.left}%`, width: `${Math.max(r.width, 1)}%` },
       title: `${r.task.start_date || ''} ${r.task.due_date || ''}${isOverdue(r.task, today) ? ' просрочена' : ''}` }));
@@ -431,8 +435,18 @@ async function loadTasks(reset) {
     state.tasks = reset ? page : state.tasks.concat(page);
     state.more = page.length === PAGE;
     if (reset) await loadSnapshot();
+    if (state.view === 'gantt') await loadGanttDeps();
   } catch (error) { state.tasks = []; state.more = false; state.error = error.message; }
   render();
+}
+
+async function loadGanttDeps() {                          // existing per-task API, only for dated tasks and with a cap
+  const dated = ganttRows(state.tasks).rows.map((r) => r.task.id).slice(0, MAX_DEP_TASKS);
+  const found = {};
+  await Promise.all(dated.map(async (id) => {
+    try { found[id] = (await api.dependencies(id)).edges; } catch { /* a task without access simply has no connectors */ }
+  }));
+  state.ganttDeps = found;
 }
 
 async function openTask(id) {
