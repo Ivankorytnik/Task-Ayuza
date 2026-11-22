@@ -105,6 +105,28 @@ await setSelect('select[name=result]', 'pass');
 await fill('input[name=evidence]', 'отчёт e2e'); await fill('input[name=valid_until]', valid);
 await click('Записать проверку');
 check('passing check with evidence turns the light green', await until("document.body.innerText.includes('Зелёный: проверено')"), (await text()).slice(0, 400));
+
+// a blocker of the controller's own task is linked to the risk and unlinked again
+await click('Список');
+await until("!!document.querySelector('#ntitle')");
+await fill('#ntitle', 'Задача контролёра');
+await ev("document.querySelector('#ntitle').form.querySelector('button[type=submit]').click()");
+await until("document.body.innerText.includes('Задача контролёра')");
+await ev("[...document.querySelectorAll('td')].find((e) => e.textContent.trim() === 'Задача контролёра')?.click()");
+await until("!!document.querySelector('#btitle')");
+await fill('#btitle', 'Блокер для риска e2e');
+await ev("document.querySelector('#btitle').form.querySelector('button[type=submit]').click()");
+check('controller blocker created', await until("document.body.innerText.includes('Блокер для риска e2e')"), (await text()).slice(-300));
+const sel = "select[aria-label=\"Связать блокер с риском\"]";
+check('risk picker shown in the blocker block', await until(`!!document.querySelector('${sel}')`));
+await ev(`(() => { const el = document.querySelector('${sel}'); el.value = el.options[1].value; el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+check('blocker linked to the risk', await until("document.body.innerText.includes('Блокер связан с риском.')"), (await text()).slice(0, 300));
+await click('Риски');
+await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Связанные задачи')");
+await click('Связанные задачи');
+check('linked blocker shown in the risk centre with its title', await until("document.body.innerText.includes('Блокер: Блокер для риска e2e')"), (await text()).slice(0, 400));
+await click('Отвязать блокер');
+check('blocker unlinked from the risk', await until("!document.body.innerText.includes('Блокер: Блокер для риска e2e')"));
 await signOut();
 
 // export without the grant, drag and drop in Kanban, loss of network

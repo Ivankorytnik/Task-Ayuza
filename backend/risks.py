@@ -333,7 +333,7 @@ class RisksService(NotificationsService):
                                 r=rid).mappings().all():
                 blocker = one(c, 'SELECT * FROM task_ayuza.blockers WHERE id=:id', id=link['blocker_id'])
                 if self._can(c, u, s, self._task(c, blocker['blocked_task_id']), 'read'):
-                    blockers.append({'blocker_id': blocker['id'], 'status': blocker['status']})
+                    blockers.append({'blocker_id': blocker['id'], 'status': blocker['status'], 'title': blocker['title']})
                 else:
                     hidden_blockers += 1
             return {'tasks': tasks, 'blockers': blockers, 'hidden_tasks': hidden_tasks, 'hidden_blockers': hidden_blockers}
