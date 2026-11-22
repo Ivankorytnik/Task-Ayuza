@@ -1,11 +1,11 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
-import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, metricsCsv, projectBar, dependencyLinks, MAX_DEP_TASKS, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
+import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, metricsCsv, projectBar, stageBars, MAX_STAGE_PROJECTS, dependencyLinks, MAX_DEP_TASKS, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
   dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
 
 const root = document.getElementById('app');
 const fresh = () => ({ user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
-  blockers: [], deps: null, ganttDeps: {}, projDates: {}, risks: [], snap: null, period: { from: '', to: '' }, metrics: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() });
+  blockers: [], deps: null, ganttDeps: {}, ganttStages: {}, projDates: {}, risks: [], snap: null, period: { from: '', to: '' }, metrics: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() });
 const state = fresh();
 function clearSession() { Object.assign(state, fresh()); }       // nothing of the previous user may stay in memory
 const api = new Api((...args) => fetch(...args), () => { clearSession(); render(); });
@@ -308,7 +308,10 @@ function ganttView() {
         return bar ? h('div', { class: 'grow' }, h('div', { class: 'glabel muted' }, 'Сроки проекта'),
           h('div', { class: 'gtrack', css: { width } }, h('div', { class: 'gproj', css: { left: `${bar.left}%`, width: `${bar.width}%` },
             title: `${state.projDates[group.key].start_date} - ${state.projDates[group.key].due_date}` }))) : '';
-      })(), group.rows.map((r) => h('div', { class: 'grow' },
+      })(), (group.key ? stageBars(state.ganttStages[group.key], g.min, g.span) : []).map((st) => h('div', { class: 'grow' },
+        h('div', { class: 'glabel muted' }, `Этап: ${st.title}`),
+        h('div', { class: 'gtrack', css: { width } }, h('div', { class: 'gstage', css: { left: `${st.left}%`, width: `${st.width}%` }, title: `${st.start} - ${st.due}` })))),
+      group.rows.map((r) => h('div', { class: 'grow' },
         h('div', { class: 'glabel', on: { click: () => openTask(r.task.id) } }, r.task.title), track(r)))))),
     g.undated.length ? h('div', { class: 'card' }, h('h3', {}, `Без дат (${g.undated.length})`),
       g.undated.map((t) => h('div', { class: 'ctask', on: { click: () => openTask(t.id) } }, t.title))) : '');
@@ -441,7 +444,7 @@ async function loadTasks(reset) {
     state.tasks = reset ? page : state.tasks.concat(page);
     state.more = page.length === PAGE;
     if (reset) await loadSnapshot();
-    if (state.view === 'gantt') await loadGanttDeps();
+    if (state.view === 'gantt') await Promise.all([loadGanttDeps(), loadGanttStages()]);
   } catch (error) { state.tasks = []; state.more = false; state.error = error.message; }
   render();
 }
@@ -453,6 +456,15 @@ async function loadGanttDeps() {                          // existing per-task A
     try { found[id] = (await api.dependencies(id)).edges; } catch { /* a task without access simply has no connectors */ }
   }));
   state.ganttDeps = found;
+}
+
+async function loadGanttStages() {                        // existing per-project API, only for projects present on the Gantt, with a cap
+  const ids = [...new Set(ganttRows(state.tasks).rows.map((r) => r.task.project_id).filter(Boolean))].slice(0, MAX_STAGE_PROJECTS);
+  const found = {};
+  await Promise.all(ids.map(async (id) => {
+    try { found[id] = await api.stages(id); } catch { /* a project without access simply shows no stages */ }
+  }));
+  state.ganttStages = found;
 }
 
 async function openTask(id) {

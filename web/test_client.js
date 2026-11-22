@@ -1,6 +1,6 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
-import { metricsCsv, projectBar, dependencyLinks, METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
+import { metricsCsv, projectBar, stageBars, dependencyLinks, METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
   STATUSES } from './logic.js';
 
 let passed = 0;
@@ -238,6 +238,23 @@ await test('project bar: scale position, clipping and missing dates', () => {
   assert.equal(projectBar({ start_date: '2026-01-06' }, min, span), null);
   assert.equal(projectBar(undefined, min, span), null);
   assert.equal(projectBar({ start_date: '2026-01-06', due_date: '2026-01-10' }, min, 0), null);
+});
+
+await test('stage bars: dated stages only, clipping, bad input', () => {
+  const day = (d) => Date.UTC(2026, 0, d) / 86400000;
+  const bars = stageBars([
+    { id: 's1', title: 'Анализ', start_date: '2026-01-06', due_date: '2026-01-10' },
+    { id: 's2', title: 'Без дат' }, { id: 's3', title: 'Позже', start_date: '2026-03-01', due_date: '2026-03-05' },
+    { id: 's4', start_date: '2025-12-30', due_date: '2026-01-02' }], day(1), 20);
+  assert.deepEqual(bars.map((b) => b.id), ['s1', 's4']);
+  assert.deepEqual([bars[0].left, bars[0].width, bars[0].title], [25, 25, 'Анализ']);
+  assert.equal(bars[1].left, 0); assert.equal(bars[1].title, 'Этап');
+  assert.deepEqual(stageBars(undefined, day(1), 20), []); assert.deepEqual(stageBars(null, day(1), 20), []);
+});
+
+await test('api: stages request path', async () => {
+  const f = fakeFetch([]); await new Api(f).stages('p1');
+  assert.equal(f.calls[0].path, '/api/v1/projects/p1/stages');
 });
 
 await test('api reference: rows from an OpenAPI document, mutation flag, grouping', async () => {

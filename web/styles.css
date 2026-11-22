@@ -62,4 +62,5 @@ tr.row{cursor:pointer}tr.row:hover,tr.row.on{background:#eef4fd}
 .garrow{position:absolute;top:4px;width:0;height:0;border-left:7px solid #6b7a8f;border-top:5px solid transparent;border-bottom:5px solid transparent}
 .garrow.conflict{border-left-color:#c0504d}
 
+.gstage{position:absolute;top:7px;bottom:7px;background:#b7c7a8;border-radius:2px;opacity:.9}
 .gproj{position:absolute;top:5px;bottom:5px;background:#8aa4c8;border-radius:2px;opacity:.85}
