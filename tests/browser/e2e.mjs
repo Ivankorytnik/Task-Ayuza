@@ -50,7 +50,7 @@ check('workspace tasks listed', await until("document.body.innerText.includes('�
 check('snapshot shown', (await text()).includes('Всего'));
 
 // metrics export: capture the generated file instead of downloading it
-await ev("window.__blobs = []; const orig = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return orig(b); }; true");
+await ev("(() => { window.__blobs = []; if (!window.__origBlobUrl) window.__origBlobUrl = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return window.__origBlobUrl(b); }; return true; })()");
 await click('Показать');
 check('metrics export button is shown', await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выгрузить метрики CSV')"), (await text()).slice(0, 300));
 await click('Выгрузить метрики CSV');
@@ -169,6 +169,22 @@ check('offline: nothing is stored on the device', await ev("localStorage.length 
 await send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
 await click('Выгрузить JSON');
 check('back online: the client works again', await until("document.body.innerText.includes('Выгрузка требует права')"), (await text()).slice(0, 300));
+await signOut();
+
+// export with the grant: the exporter signs in, fresh MFA is a fixture, the generated files are captured
+await signIn(user.exporter.login, user.exporter.password);
+check('exporter signed in', await loggedIn());
+execFileSync('python', ['tests/e2e/mark_mfa.py', user.exporter.id], { stdio: 'inherit' });
+await ev("(() => { window.__blobs = []; if (!window.__origBlobUrl) window.__origBlobUrl = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return window.__origBlobUrl(b); }; return true; })()");
+await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выгрузить CSV')");
+await click('Выгрузить CSV');
+check('csv export produces a file', await until("window.__blobs.length === 1"), String(await ev('window.__blobs.length')));
+check('csv export reports the rows', await until("document.body.innerText.includes('Выгружено строк')"), (await text()).slice(-400));
+const csvText = await ev("window.__blobs[0].text()");
+check('csv holds the exporter task', String(csvText).includes('Задача экспорта'), String(csvText).slice(0, 400));
+await click('Выгрузить JSON');
+check('json export succeeds', await until("window.__blobs.length === 2"));
+check('json is valid and holds the task', await ev("window.__blobs[1].text().then((t) => { try { return JSON.stringify(JSON.parse(t)).includes('Задача экспорта'); } catch { return false; } }, () => false)"));
 await signOut();
 
 // API reference page: rendered from the service's own openapi.json under the same CSP
