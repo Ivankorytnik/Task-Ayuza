@@ -14,6 +14,7 @@ http.createServer((req,res)=>{
   if(u.endsWith('/directory'))return J(res,{role:'member',teams:[],members:[{user_id:'u1',display_name:'Иван',role:'member'}],my_team_ids:[],timezone:'Europe/Moscow',today:'2026-11-21'});
   if(u==='/api/v1/workspaces/w1/snapshot')return J(res,{total:3,active:2,in_progress:0,done:1,blocked:1,overdue:1,upcoming:0,no_due_date:1,no_project:2,include_subtasks:false,upcoming_days:7});
   if(u==='/api/v1/workspaces/w1/projects')return J(res,[{id:'p1',title:'Проект Альфа'}]);
+  if(u==='/api/v1/projects/p1/stages')return J(res,[{id:'s1',title:'Анализ',start_date:'2026-11-20',due_date:'2026-11-25'},{id:'s2',title:'Без дат'}]);
   if(u==='/api/v1/workspaces/w1/tasks')return J(res,[task(1,'new'),task(2,'done'),task(3,'blocked')]);
   if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/comments'))return J(res,[]);
   if(u.startsWith('/api/v1/tasks/t')&&u.endsWith('/blockers'))return J(res,[{id:'b1',version:1,title:'Ждём договор',status:'active',expected_resolution_date:'2026-12-20'}]);

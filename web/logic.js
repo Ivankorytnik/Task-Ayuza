@@ -222,6 +222,17 @@ export function projectBar(project, min, span) {
   return { left, width: Math.max(right - left, 0.5) };
 }
 
+// Stage bars of one project on the shared Gantt scale; stages without both dates or outside the visible range are skipped
+export const MAX_STAGE_PROJECTS = 20;
+export function stageBars(stages, min, span) {
+  const bars = [];
+  for (const stage of Array.isArray(stages) ? stages : []) {
+    const bar = projectBar(stage, min, span);
+    if (bar) bars.push({ id: stage.id, title: stage.title || 'Этап', start: stage.start_date, due: stage.due_date, ...bar });
+  }
+  return bars;
+}
+
 // Month grid starting on Monday; each cell holds the tasks due that day.
 export function monthGrid(year, month, tasks) {
   const first = Date.UTC(year, month, 1) / DAY;
@@ -330,6 +341,7 @@ export class Api {
   me() { return this.request('GET', '/api/v1/auth/me'); }
   logout() { return this.request('POST', '/api/v1/auth/logout', undefined, true); }
   workspaces() { return this.request('GET', '/api/v1/workspaces'); }
+  stages(projectId) { return this.request('GET', `/api/v1/projects/${projectId}/stages`); }
   projects(ws) { return this.request('GET', `/api/v1/workspaces/${ws}/projects?limit=200`); }
   directory(ws) { return this.request('GET', `/api/v1/workspaces/${ws}/directory`); }
   tasks(ws, filters, after) { return this.request('GET', `/api/v1/workspaces/${ws}/tasks?${taskQuery(PAGE, filters, after)}`); }
