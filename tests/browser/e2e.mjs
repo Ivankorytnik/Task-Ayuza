@@ -184,7 +184,7 @@ const csvText = await ev("window.__blobs[0].text()");
 check('csv holds the exporter task', String(csvText).includes('Задача экспорта'), String(csvText).slice(0, 400));
 await click('Выгрузить JSON');
 check('json export succeeds', await until("window.__blobs.length === 2"));
-check('json is valid and holds the task', await ev("window.__blobs[1].text().then((t) => { const d = JSON.parse(t); return JSON.stringify(d).includes('Задача экспорта'); })"));
+check('json is valid and holds the task', await ev("window.__blobs[1].text().then((t) => { try { return JSON.stringify(JSON.parse(t)).includes('Задача экспорта'); } catch { return false; } }, () => false)"));
 await signOut();
 
 // API reference page: rendered from the service's own openapi.json under the same CSP
