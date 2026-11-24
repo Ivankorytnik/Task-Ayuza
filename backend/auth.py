@@ -331,21 +331,48 @@ class AuthService:
         execute(c, 'UPDATE task_ayuza.users SET auth_version=auth_version+1 WHERE id=:id', id=uid)
         execute(c, 'UPDATE task_ayuza.sessions SET revoked_at=clock_timestamp() WHERE user_id=:id AND revoked_at IS NULL', id=uid)
 
-    def change_password(self, token, csrf, new_password, current_password=None, request_id=None):
+    def change_password(self, token, csrf, new_password, current_password=None, request_id=None, ip=None):
+        """A normal session proves the current password through the login limiter
+        (5/login + 100/IP, charged before Argon2id); a wrong one is audited as
+        auth.login_failed on the user with the normal session's ID."""
         if not csrf:
             raise AuthError(403, 'Request verification failed')
         validate_password(new_password)
+        request_id = request_id or uuid.uuid4()
+        # Verify session and CSRF before charging an attempt; the user lock and all
+        # remaining checks are repeated in run(), so no user row lock is taken here.
+        def precheck(c):
+            s = self._locked_session(c, self._lookup(c, token)['id'], csrf)
+            u = one(c, 'SELECT login_normalized FROM task_ayuza.users WHERE id=:id',
+                    id=s['user_id']) if s['user_id'] else None
+            if u is None or s['kind'] not in {'normal', 'password'}:
+                raise AuthError()
+            return s['kind'], u['login_normalized']
+        kind, login = self.transaction(precheck)
+        if kind == 'normal':
+            if current_password is None:
+                raise AuthError()
+            if ip is None:
+                raise AuthError(503, 'Authentication service unavailable')
         def run(c):
             u,s = self._authorized(c, token, csrf, allow_password=True)
-            if s['kind'] == 'normal' and (current_password is None or not verify(u['password_hash'], current_password)):
+            if s['kind'] != kind or u['login_normalized'] != login:
                 raise AuthError()
+            if s['kind'] == 'normal' and not verify(u['password_hash'], current_password):
+                event(c, 'login_failed', user_id=u['id'], session_id=s['id'], request_id=request_id)
+                return False
             encoded = hash_password(new_password)
             execute(c, '''UPDATE task_ayuza.users SET password_hash=:hash,
                 must_change_password=false,temporary_expires_at=NULL WHERE id=:id''', hash=encoded,id=u['id'])
             self._revoke(c,u['id'])
-            event(c,'password_changed',user_id=u['id'],session_id=s['id'],request_id=request_id or uuid.uuid4())
+            event(c,'password_changed',user_id=u['id'],session_id=s['id'],request_id=request_id)
+            return True
         with argon2_slot():
-            self.transaction(run)
+            if kind == 'normal':
+                self.reserve(login, ip, request_id)
+            changed = self.transaction(run)
+        if not changed:
+            raise AuthError()
 
     def create_user(self, organization_id, login, display_name, request_id=None):
         """Closed service function. Caller authorization belongs to M01.4, no HTTP route."""

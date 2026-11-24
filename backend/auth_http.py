@@ -149,7 +149,7 @@ def password(data: PasswordInput,request: Request,response: Response):
     token,csrf=credentials(request)
     try:
         request.app.state.auth.change_password(token,csrf,data.new_password.get_secret_value(),
-            data.current_password.get_secret_value() if data.current_password else None)
+            data.current_password.get_secret_value() if data.current_password else None,ip=client_ip(request))
     except ValueError:
         raise AuthError(422,'Password does not satisfy policy') from None
     response.delete_cookie(COOKIE,secure=True,httponly=True,samesite='lax',path='/')

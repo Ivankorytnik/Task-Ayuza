@@ -281,7 +281,7 @@ def test_audit_failure_rolls_back(service):
     with patch('backend.auth.event',side_effect=broken):
         rejected(lambda:service.reset_password(uid),503)
         rejected(lambda:service.deactivate(uid),503)
-        rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD),503)
+        rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD,ip='192.0.2.93'),503)
         rejected(lambda:service.logout(s['token'],s['csrf_token']),503)
         rejected(lambda:service.renew(s['token'],s['csrf_token']),503)
     assert dict(read_user(service,uid))==dict(before)
@@ -740,7 +740,7 @@ def test_busy_argon2_gate_fails_fast_without_side_effects(service):
             started=time.perf_counter()
             rejected(lambda:service.login(name,PASSWORD,'203.0.113.170',pre['token'],pre['csrf_token']),503)
             assert time.perf_counter()-started<1
-            rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD),503)
+            rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD,ip='203.0.113.170'),503)
             rejected(lambda:service.reset_password(uid),503)
         finally:
             release()
@@ -808,3 +808,58 @@ def test_http_mapped_ipv4_proxy_peer_is_trusted(service):
             app.state.trusted_proxies=()
     assert response.status_code==200
     assert prelogins_for_ip(service,'203.0.113.173')==1 and prelogins_for_ip(service,'198.51.100.42')==0
+
+
+def attempts_for_login(service, name):
+    with service.engine.connect() as c:
+        return execute(c,'SELECT count(*) FROM task_ayuza.login_attempts WHERE login_key=:key',key=service.key('login',name)).scalar_one()
+
+
+def test_wrong_current_password_is_limited_and_audited(service):
+    uid,name,s=normal(service)
+    assert attempts_for_login(service,name)==2  # two logins so far
+    before=read_user(service,uid)
+    ip='203.0.113.180'
+    # CSRF or a missing current password is refused before any charge.
+    rejected(lambda:service.change_password(s['token'],'x'*43,PASSWORD+'2',PASSWORD,ip=ip),403)
+    rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',None,ip=ip))
+    rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD),503)  # no IP: fail closed
+    assert attempts_for_login(service,name)==2 and attempts_for_ip(service,ip)==0
+    for n in range(3):
+        rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2','wrong '+PASSWORD,ip=ip))
+    assert attempts_for_login(service,name)==5 and attempts_for_ip(service,ip)==3
+    with service.engine.connect() as c:
+        rows=execute(c,"""SELECT * FROM task_ayuza.audit_events WHERE entity_id=:uid AND session_id=:sid
+                          AND action='auth.login_failed' ORDER BY occurred_at""",uid=uid,sid=s['session_id']).mappings().all()
+        dump=json.dumps([dict(r) for r in rows],default=str)
+    assert len(rows)==3 and all(r['entity_kind']=='user' for r in rows)
+    for secret in (PASSWORD,'wrong '+PASSWORD,s['token'],s['csrf_token'],ip):assert secret not in dump
+    # The shared login budget is exhausted: even the right password, and a fresh login, now get 429.
+    rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD,ip=ip),429)
+    pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
+    rejected(lambda:service.login(name,PASSWORD,'192.0.2.94',pre['token'],pre['csrf_token']),429)
+    assert dict(read_user(service,uid))==dict(before)
+    assert service.me(s['token'])['id']==str(uid)
+
+
+def test_right_current_password_still_changes_once_charged(service):
+    uid,name,s=normal(service)
+    service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD,ip='203.0.113.181')
+    assert attempts_for_login(service,name)==3 and attempts_for_ip(service,'203.0.113.181')==1
+    rejected(lambda:service.me(s['token']))
+    assert login(service,name,PASSWORD+'2')['kind']=='normal'
+    # Temporary-password sessions need no current password and are not charged.
+    uid2,name2,pw2=user(service)
+    t=login(service,name2,pw2)
+    service.change_password(t['token'],t['csrf_token'],PASSWORD)
+    assert attempts_for_login(service,name2)==1
+
+
+def test_http_wrong_current_password_charges_client_ip(service):
+    uid,name,s=normal(service)
+    with TestClient(app,base_url='https://test.local',client=('203.0.113.182',1234)) as client:
+        client.cookies.set('__Host-ay_session',s['token'])
+        response=client.post('/api/v1/auth/password',json={'new_password':PASSWORD+'2','current_password':'wrong '+PASSWORD},
+                             headers={'Origin':'https://test.local','X-CSRF-Token':s['csrf_token']})
+    assert response.status_code==401 and response.json()=={'detail':'Authentication failed'}
+    assert 'wrong' not in response.text and attempts_for_ip(service,'203.0.113.182')==1
