@@ -863,3 +863,25 @@ def test_http_wrong_current_password_charges_client_ip(service):
                              headers={'Origin':'https://test.local','X-CSRF-Token':s['csrf_token']})
     assert response.status_code==401 and response.json()=={'detail':'Authentication failed'}
     assert 'wrong' not in response.text and attempts_for_ip(service,'203.0.113.182')==1
+
+
+def test_over_limit_request_needs_no_argon2_slot(service):
+    uid,name,pw=user(service)
+    for _ in range(5):
+        pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
+        rejected(lambda:service.login(name,'wrong '+pw,'203.0.113.190',pre['token'],pre['csrf_token']))
+    pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
+    try:
+        GATE.configure(1,wait=5)
+        release=hold_gate()
+        try:
+            started=time.perf_counter()
+            # The limiter answers before the gate: a held gate neither delays nor turns this into 503.
+            rejected(lambda:service.login(name,pw,'203.0.113.190',pre['token'],pre['csrf_token']),429)
+            assert time.perf_counter()-started<2
+        finally:
+            release()
+    finally:
+        GATE.configure(4)
+    assert attempts_for_login(service,name)==5
+

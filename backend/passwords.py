@@ -24,12 +24,15 @@ class Argon2Gate:
     Peak Argon2 memory of one worker process is limit x 64 MiB; of a deployment,
     workers x limit x 64 MiB. Parameters of Argon2id itself are never weakened.
     A slot is re-entrant within one thread, which runs only one operation at a time.
+    The wait is short so that waiting requests do not tie up the shared threadpool
+    (one Argon2id takes about 0.15-0.2 s). configure() is for startup only: slots
+    already held on the previous semaphore are not counted against a new one.
     """
-    def __init__(self, limit=4, wait=1.0):
+    def __init__(self, limit=4, wait=0.25):
         self._local = threading.local()
         self.configure(limit, wait)
 
-    def configure(self, limit, wait=1.0):
+    def configure(self, limit, wait=0.25):
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 64 or not 0 <= wait <= 10:
             raise ValueError('Invalid Argon2 concurrency limit')
         self.limit, self.wait = limit, wait

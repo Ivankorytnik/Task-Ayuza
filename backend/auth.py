@@ -75,7 +75,7 @@ def event(c, action, *, user_id=None, session_id=None, request_id):
 
 @contextmanager
 def argon2_slot():
-    """Bounded wait for an Argon2id slot; taken before any limiter charge or row lock."""
+    """Bounded wait for an Argon2id slot for operations without a limiter charge."""
     try:
         with GATE.slot():
             yield
@@ -140,12 +140,29 @@ class AuthService:
                 if counts['ips'] >= 100:
                     self._limited_event(c, 'ip', ip_key, now, request_id)
                 return False
+            attempt = uuid.uuid4()
             execute(c, '''INSERT INTO task_ayuza.login_attempts
                 (id,login_key,ip_key,attempted_at) VALUES (:id,:login,:ip,:now)''',
-                id=uuid.uuid4(), login=login_key, ip=ip_key, now=now)
-            return True
-        if not self.transaction(operation):
+                id=attempt, login=login_key, ip=ip_key, now=now)
+            return attempt
+        attempt = self.transaction(operation)
+        if not attempt:
             raise AuthError(429, 'Too many login attempts')
+        return attempt
+
+    def _with_argon2(self, attempt, operation):
+        """Run an Argon2-bearing transaction in a gate slot. The limiter is charged
+        first, outside the slot, so requests it rejects never occupy a slot; if no
+        slot frees in time the just-reserved technical attempt row is withdrawn
+        (no audit), so a busy answer charges nothing."""
+        try:
+            with GATE.slot():
+                return self.transaction(operation)
+        except Argon2Busy:
+            if attempt is not None:
+                self.transaction(lambda c: execute(
+                    c, 'DELETE FROM task_ayuza.login_attempts WHERE id=:id', id=attempt))
+            raise AuthError(503, 'Authentication service busy') from None
 
     def _session(self, c, *, user=None, kind='prelogin'):
         now = clock(c)
@@ -288,10 +305,7 @@ class AuthService:
             result = self._session(c, user=u, kind='password' if u['must_change_password'] else 'normal')
             event(c, 'login', user_id=u['id'], session_id=result['session_id'], request_id=request_id)
             return result
-        # A busy gate answers 503 before an attempt is charged.
-        with argon2_slot():
-            self.reserve(normalized, ip, request_id)
-            result = self.transaction(operation)
+        result = self._with_argon2(self.reserve(normalized, ip, request_id), operation)
         if result is None:
             raise AuthError()
         return result
@@ -367,10 +381,8 @@ class AuthService:
             self._revoke(c,u['id'])
             event(c,'password_changed',user_id=u['id'],session_id=s['id'],request_id=request_id)
             return True
-        with argon2_slot():
-            if kind == 'normal':
-                self.reserve(login, ip, request_id)
-            changed = self.transaction(run)
+        attempt = self.reserve(login, ip, request_id) if kind == 'normal' else None
+        changed = self._with_argon2(attempt, run)
         if not changed:
             raise AuthError()
 
