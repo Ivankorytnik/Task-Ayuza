@@ -626,7 +626,7 @@ def test_trusted_proxy_configuration_fails_closed():
         assert trusted_proxies()==(ipaddress.ip_network('10.0.0.0/8'),ipaddress.ip_network('198.51.100.40/32'),ipaddress.ip_network('2001:db8::1/128'))
     with patch.dict(os.environ,{'TASK_AYUZA_TRUSTED_PROXIES':''}):
         assert trusted_proxies()==()
-    for bad in ('10.0.0.1/8','proxy.local','10.0.0.0/8;1.2.3.4','*'):
+    for bad in ('10.0.0.1/8','proxy.local','10.0.0.0/8;1.2.3.4','*','::ffff:198.51.100.40','::ffff:0:0/96'):
         with patch.dict(os.environ,{'TASK_AYUZA_TRUSTED_PROXIES':bad}), pytest.raises(ConfigurationError):
             trusted_proxies()
 
@@ -709,7 +709,7 @@ def test_argon2_gate_caps_simultaneous_operations():
     with patch.dict(os.environ,{},clear=False):
         os.environ.pop('TASK_AYUZA_ARGON2_MAX_CONCURRENT',None)
         assert argon2_max_concurrent()==4
-    for bad in ('0','65','-1','four','',' '):
+    for bad in ('0','65','-1','four','',' ','\u00b2','\u0664'):
         with patch.dict(os.environ,{'TASK_AYUZA_ARGON2_MAX_CONCURRENT':bad}),pytest.raises(ConfigurationError):
             argon2_max_concurrent()
 

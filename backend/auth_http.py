@@ -31,9 +31,13 @@ def trusted_proxies():
     for part in os.environ.get('TASK_AYUZA_TRUSTED_PROXIES', '').split(','):
         if part.strip():
             try:
-                networks.append(ipaddress.ip_network(part.strip(), strict=True))
+                network = ipaddress.ip_network(part.strip(), strict=True)
+                # Peers are folded from ::ffff:a.b.c.d to IPv4, so a mapped entry would never match.
+                if network.version == 6 and network.subnet_of(ipaddress.ip_network('::ffff:0:0/96')):
+                    raise ValueError()
             except ValueError:
                 raise ConfigurationError('Invalid trusted proxy configuration') from None
+            networks.append(network)
     return tuple(networks)
 
 
