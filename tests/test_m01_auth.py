@@ -774,3 +774,37 @@ def test_http_busy_argon2_gate_is_503(service):
         assert response.status_code==503 and response.json()=={'detail':'Authentication service busy'}
         assert response.headers['cache-control']=='no-store' and 'set-cookie' not in response.headers
         assert attempts_for_ip(service,'203.0.113.171')==0
+
+
+def test_ipv6_limits_per_64_and_mapped_ipv4(service):
+    from backend.auth import limiter_address
+    assert limiter_address('2001:db8:1:2::1')==limiter_address('2001:db8:1:2:ffff:ffff:ffff:ffff')=='2001:db8:1:2::/64'
+    assert limiter_address('2001:db8:1:3::1')=='2001:db8:1:3::/64'
+    assert limiter_address('fe80::1%eth0')=='fe80::/64'
+    assert limiter_address('::ffff:203.0.113.172')==limiter_address('203.0.113.172')=='203.0.113.172'
+    for bad in ('','testclient','2001:db8::/64','203.0.113.300'):
+        with pytest.raises(ValueError):limiter_address(bad)
+    # A host rotating addresses inside its /64 shares one prelogin quota (30/15 min).
+    issued=[service.prelogin(ip=f'2001:db8:1:2::{n:x}') for n in range(1,31)]
+    assert len(issued)==30
+    rejected(lambda:service.prelogin(ip='2001:db8:1:2:abcd::1'),429)
+    assert service.prelogin(ip='2001:db8:1:3::1')['kind']=='prelogin'
+    # Login attempts from one /64 and from mapped IPv4 are charged to one key each.
+    uid,name,pw=user(service)
+    for ip in ('2001:db8:1:4::1','2001:db8:1:4::2','::ffff:203.0.113.172','203.0.113.172'):
+        pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
+        rejected(lambda:service.login(name,'wrong '+pw,ip,pre['token'],pre['csrf_token']))
+    assert attempts_for_ip(service,'2001:db8:1:4::/64')==2 and attempts_for_ip(service,'203.0.113.172')==2
+    assert attempts_for_ip(service,'2001:db8:1:4::1')==0 and attempts_for_ip(service,'::ffff:203.0.113.172')==0
+
+
+def test_http_mapped_ipv4_proxy_peer_is_trusted(service):
+    import ipaddress
+    with TestClient(app,base_url='https://test.local',client=('::ffff:198.51.100.42',1234)) as client:
+        app.state.trusted_proxies=(ipaddress.ip_network('198.51.100.42/32'),)
+        try:
+            response=client.get('/api/v1/auth/prelogin',headers={'Origin':'https://test.local','X-Forwarded-For':'::ffff:203.0.113.173'})
+        finally:
+            app.state.trusted_proxies=()
+    assert response.status_code==200
+    assert prelogins_for_ip(service,'203.0.113.173')==1 and prelogins_for_ip(service,'198.51.100.42')==0

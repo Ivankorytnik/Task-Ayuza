@@ -45,6 +45,18 @@ def clock(c):
     return execute(c, 'SELECT clock_timestamp()').scalar_one()
 
 
+def limiter_address(ip) -> str:
+    """Limiter identity of a client address. One IPv6 /64 is one client: a single host
+    usually controls the whole /64, so per-address keys would let it rotate past 100/IP
+    and 30/IP. IPv4-mapped IPv6 is the IPv4 client. Raises ValueError for non-addresses."""
+    address = ipaddress.ip_address(ip)
+    if address.version == 6:
+        if address.ipv4_mapped:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.IPv6Network((int(address) >> 64 << 64, 64)))
+    return str(address)
+
+
 AUTH_ACTIONS = frozenset({'user_created','password_reset','password_changed','deactivated',
                          'login_failed','login_limited','login','logout','renewed'})
 
@@ -108,7 +120,7 @@ class AuthService:
 
     def reserve(self, login, ip, request_id):
         login_key = self.key('login', login)
-        ip_key = self.key('ip', str(ipaddress.ip_address(ip)))
+        ip_key = self.key('ip', limiter_address(ip))
         # Ordered transaction-scoped advisory locks serialize BOTH intersecting limits.
         # Truncated HMAC collisions only over-serialize; counts use full HMAC keys.
         locks = sorted({int.from_bytes(x[:8], 'big', signed=True) for x in (login_key, ip_key)})
@@ -157,7 +169,7 @@ class AuthService:
         if ip is None:
             raise AuthError(503, 'Authentication service unavailable')
         try:
-            ip_key = self.key('prelogin-ip', str(ipaddress.ip_address(ip)))
+            ip_key = self.key('prelogin-ip', limiter_address(ip))
         except ValueError:
             raise AuthError(503, 'Authentication service unavailable') from None
 

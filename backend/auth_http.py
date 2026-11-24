@@ -50,6 +50,8 @@ def client_ip(request):
         address = ipaddress.ip_address(peer)
     except ValueError:
         return peer  # AuthService rejects it fail-closed.
+    if address.version == 6 and address.ipv4_mapped:
+        address = address.ipv4_mapped  # dual-stack listener reporting an IPv4 proxy
     if not any(address in network for network in networks):
         return str(address)
     hops = [hop.strip() for value in request.headers.getlist('x-forwarded-for') for hop in value.split(',')]
@@ -58,6 +60,8 @@ def client_ip(request):
             address = ipaddress.ip_address(hop)
         except ValueError:
             break
+        if address.version == 6 and address.ipv4_mapped:
+            address = address.ipv4_mapped
         if not any(address in network for network in networks):
             return str(address)
     raise AuthError(503, 'Authentication service unavailable')
