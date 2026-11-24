@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import admin as admin_cli  # noqa: E402
@@ -157,3 +158,44 @@ def test_operator_errors_are_reported_not_raised(service):
     assert run(console, 'create-user', 'x', 'Too short')[1].startswith('error:')
     assert run(console, 'add-member', 'nobody_here', 'No such workspace', 'nobody', 'participant')[1].startswith('error: No workspace')
     assert admin_cli.main(['status'], out=console.out, environ={}) == 2
+
+
+def test_single_person_first_run_as_in_deploy_readme(service, migrator):
+    """deploy/README.md, one person: a daily account and two admin accounts, step by step."""
+    console = Console()
+    suffix = uuid.uuid4().hex[:6]
+    me, owner, adm = f'ivan{suffix}', f'ivan{suffix}-owner', f'ivan{suffix}-admin'
+    for login in (me, owner, adm):                                     # step 1
+        code, out = run(console, 'create-user', login, 'Ivan')
+        assert code == 0
+        first_password_change(service, login, temporary(out))          # step 2 (website)
+        console.passwords[login] = PASSWORD
+    for login in (owner, adm):                                         # step 3
+        assert run(console, 'enroll-mfa', login)[0] == 0
+    # step 4 already ran once in this suite's database; stand in for it as the earlier tests do
+    with migrator.begin() as c:
+        for login, role in ((owner, 'system_owner'), (adm, 'access_approver')):
+            uid = c.execute(text('SELECT id FROM task_ayuza.users WHERE login=:l'), {'l': login}).scalar_one()
+            c.execute(text('''INSERT INTO task_ayuza.system_role_assignments (id, user_id, role_code, reason)
+                VALUES (:id, :u, :r, 'synthetic setup')'''), {'id': uuid.uuid4(), 'u': uid, 'r': role})
+    ws, team = f'Rabota {suffix}', f'Komanda {suffix}'
+    steps = [(owner, [f'grant-role {adm} system_admin']),                                         # step 5
+             (adm, [f'create-workspace "{ws}"', f'create-team "{team}"', f'add-team-member "{team}" {me}']),  # 6
+             (owner, [f'first-workspace-admin "{ws}" {adm}']),                                    # step 7
+             (adm, [f'add-member "{ws}" {me} participant', f'link-team "{ws}" "{team}"'])]        # step 8
+    for actor, script in steps:
+        console.script = list(script)
+        code, out = run(console, 'session', actor)
+        assert code == 0 and 'error' not in out, out
+    code, out = run(console, 'status')                                                            # step 9
+    assert f'{me}:participant' in out and f'{adm}:workspace_admin' in out
+    for login in (me, owner, adm):     # nobody is locked out by the 5-per-15-minutes limit
+        n = rows(migrator, 'SELECT count(*) AS n FROM task_ayuza.login_attempts WHERE login_key=:k',
+                 k=service.key('login', login))[0]['n']
+        assert n <= 4, (login, n)
+    pre = service.prelogin(ip='198.51.100.152')
+    s = service.login(me, PASSWORD, '198.51.100.152', pre['token'], pre['csrf_token'])
+    wid = rows(migrator, 'SELECT id FROM task_ayuza.workspaces WHERE name=:n', n=ws)[0]['id']
+    tid = rows(migrator, 'SELECT id FROM task_ayuza.teams WHERE name=:n', n=team)[0]['id']
+    mid = rows(migrator, 'SELECT id FROM task_ayuza.users WHERE login=:l', l=me)[0]['id']
+    assert WorkService(service).create_task(s['token'], s['csrf_token'], wid, 'Solo task', mid, tid)['id']
