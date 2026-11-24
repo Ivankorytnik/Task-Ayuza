@@ -239,6 +239,12 @@ def test_a09_backup_read_only(runtime_engine):
         with backup_engine.connect() as conn:
             conn.execute(text("SELECT count(*) FROM task_ayuza.organization")).scalar_one()
             conn.execute(text("SELECT count(*) FROM task_ayuza.audit_events")).scalar_one()
+            # pg_dump as the backup role locks and reads every table: none may be missing a grant.
+            unreadable = conn.execute(text("""SELECT c.relname FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'task_ayuza' AND c.relkind IN ('r', 'p')
+                  AND NOT has_table_privilege(c.oid, 'SELECT')""")).scalars().all()
+            assert unreadable == []
         for stmt in (
             "UPDATE task_ayuza.organization SET name='forbidden'",
             "DELETE FROM task_ayuza.audit_events",
