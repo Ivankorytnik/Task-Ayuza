@@ -74,7 +74,7 @@ jobs:
           TASK_AYUZA_ORIGIN: https://localhost:8443
           TASK_AYUZA_AUTH_HMAC_KEY: 'a0000000000000000000000000000000000000000000000000000000000000b1'
         run: |
-          python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
+          python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers > uvicorn.log 2>&1 &
           ok=0
           for i in $(seq 1 20); do
             if curl -sf http://127.0.0.1:8000/openapi.json -o openapi.json; then ok=1; break; fi
@@ -97,7 +97,7 @@ jobs:
           TASK_AYUZA_OUTBOX_INTERVAL: '0'
         run: |
           openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost'
-          python -m uvicorn backend.main:app --host 127.0.0.1 --port 8443 --ssl-keyfile key.pem --ssl-certfile cert.pem > uvicorn-tls.log 2>&1 &
+          python -m uvicorn backend.main:app --host 127.0.0.1 --port 8443 --no-proxy-headers --ssl-keyfile key.pem --ssl-certfile cert.pem > uvicorn-tls.log 2>&1 &
           ok=0
           for i in $(seq 1 20); do
             if curl -skf https://localhost:8443/openapi.json -o /dev/null; then ok=1; break; fi
