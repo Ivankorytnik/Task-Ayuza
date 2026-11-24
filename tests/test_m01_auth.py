@@ -18,7 +18,7 @@ from sqlalchemy.exc import DBAPIError
 import backend.auth as auth_module
 from backend.auth import AuthService, AuthError, digest, execute, one, clock
 from backend.main import app
-from backend.passwords import HASHER, normalize_login, validate_password
+from backend.passwords import GATE, HASHER, normalize_login, validate_password
 from test_m01_foundation import _test_url
 
 PASSWORD='Synthetic durable пароль 908!'
@@ -75,7 +75,8 @@ def test_policy_and_argon_measurement():
         t=time.perf_counter(); encoded=HASHER.hash(PASSWORD); durations.append(time.perf_counter()-t)
         assert '$argon2id$v=19$m=65536,t=3,p=1$' in encoded
         assert HASHER.verify(encoded,PASSWORD)
-        assert not auth_module.verify(encoded,PASSWORD+' ')
+        with GATE.slot():
+            assert not auth_module.verify(encoded,PASSWORD+' ')
     with ThreadPoolExecutor(max_workers=4) as pool:
         t=time.perf_counter(); list(pool.map(HASHER.hash,[PASSWORD]*4)); parallel=time.perf_counter()-t
     print(f'ARGON2 single_seconds={durations}; four_concurrent_seconds={parallel:.3f}; configured_memory=64MiB/operation; process_peak_RSS_KiB={resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}',flush=True)
@@ -668,3 +669,108 @@ def test_http_client_ip_from_trusted_proxy_only(service):
             assert response.status_code==503 and 'set-cookie' not in response.headers
         assert prelogins_for_ip(service,'198.51.100.40')==0 and prelogins_for_ip(service,'203.0.113.164')==0
         app.state.trusted_proxies=()
+
+
+def test_argon2_gate_caps_simultaneous_operations():
+    import backend.passwords as passwords
+    from backend.config import argon2_max_concurrent
+    from backend.config import ConfigurationError
+    running=0;peak=0;guard=Lock()
+    class Probe:
+        def hash(self,value):
+            nonlocal running,peak
+            with guard:
+                running+=1;peak=max(peak,running)
+            time.sleep(0.05)
+            with guard:running-=1
+            return 'probe'
+    try:
+        GATE.configure(2,wait=5)
+        with patch.object(passwords,'HASHER',Probe()):
+            def work(_):
+                with GATE.slot():
+                    return passwords.hash_password('x')
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                assert list(pool.map(work,range(16)))==['probe']*16
+        assert peak==2
+        # Every Argon2id call must hold a slot; nesting in one thread does not self-deadlock.
+        for fn in (lambda:passwords.hash_password(PASSWORD),lambda:passwords.verify('$argon2id$x',PASSWORD)):
+            with pytest.raises(RuntimeError):fn()
+        GATE.configure(1,wait=0)
+        with GATE.slot():
+            with GATE.slot():
+                assert passwords.verify(HASHER.hash(PASSWORD),PASSWORD)
+        for bad in (0,65,True,'4',1.5):
+            with pytest.raises(ValueError):GATE.configure(bad)
+    finally:
+        GATE.configure(4)
+    with patch.dict(os.environ,{'TASK_AYUZA_ARGON2_MAX_CONCURRENT':' 8 '}):
+        assert argon2_max_concurrent()==8
+    with patch.dict(os.environ,{},clear=False):
+        os.environ.pop('TASK_AYUZA_ARGON2_MAX_CONCURRENT',None)
+        assert argon2_max_concurrent()==4
+    for bad in ('0','65','-1','four','',' '):
+        with patch.dict(os.environ,{'TASK_AYUZA_ARGON2_MAX_CONCURRENT':bad}),pytest.raises(ConfigurationError):
+            argon2_max_concurrent()
+
+
+def hold_gate():
+    """Occupy every slot from another thread until the returned release() is called."""
+    import threading
+    taken=threading.Event();done=threading.Event()
+    def holder():
+        with GATE.slot():
+            taken.set();done.wait(10)
+    thread=threading.Thread(target=holder);thread.start();assert taken.wait(5)
+    def release():
+        done.set();thread.join(5)
+    return release
+
+
+def test_busy_argon2_gate_fails_fast_without_side_effects(service):
+    uid,name,s=normal(service)
+    pre=service.prelogin(ip='203.0.113.170')
+    with service.engine.connect() as c:
+        audits=execute(c,'SELECT count(*) FROM task_ayuza.audit_events').scalar_one()
+    before=read_user(service,uid)
+    try:
+        GATE.configure(1,wait=0.05)
+        release=hold_gate()
+        try:
+            started=time.perf_counter()
+            rejected(lambda:service.login(name,PASSWORD,'203.0.113.170',pre['token'],pre['csrf_token']),503)
+            assert time.perf_counter()-started<1
+            rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD),503)
+            rejected(lambda:service.reset_password(uid),503)
+        finally:
+            release()
+        # Nothing was charged, consumed, changed or audited while busy.
+        assert attempts_for_ip(service,'203.0.113.170')==0
+        assert dict(read_user(service,uid))==dict(before)
+        with service.engine.connect() as c:
+            assert execute(c,'SELECT count(*) FROM task_ayuza.audit_events').scalar_one()==audits
+        assert service.me(s['token'])['id']==str(uid)
+        fresh=service.login(name,PASSWORD,'203.0.113.170',pre['token'],pre['csrf_token'])
+        assert fresh['kind']=='normal' and attempts_for_ip(service,'203.0.113.170')==1
+    finally:
+        GATE.configure(4)
+
+
+def test_http_busy_argon2_gate_is_503(service):
+    uid,name,pw=user(service)
+    origin={'Origin':'https://test.local'}
+    with TestClient(app,base_url='https://test.local',client=('203.0.113.171',1234)) as client:
+        pre=client.get('/api/v1/auth/prelogin',headers=origin)
+        try:
+            GATE.configure(1,wait=0.05)
+            release=hold_gate()
+            try:
+                response=client.post('/api/v1/auth/login',json={'login':name,'password':pw},
+                                     headers={**origin,'X-CSRF-Token':pre.json()['csrf_token']})
+            finally:
+                release()
+        finally:
+            GATE.configure(4)
+        assert response.status_code==503 and response.json()=={'detail':'Authentication service busy'}
+        assert response.headers['cache-control']=='no-store' and 'set-cookie' not in response.headers
+        assert attempts_for_ip(service,'203.0.113.171')==0

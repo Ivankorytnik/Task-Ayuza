@@ -23,3 +23,11 @@ def database_url() -> str:
     except (ValueError, TypeError, ArgumentError):
         raise ConfigurationError("Invalid PostgreSQL database configuration") from None
     return raw
+
+
+def argon2_max_concurrent() -> int:
+    """Simultaneous Argon2id operations per worker process (each 64 MiB); default 4."""
+    raw = os.environ.get("TASK_AYUZA_ARGON2_MAX_CONCURRENT", "4").strip()
+    if not raw.isdigit() or not 1 <= int(raw) <= 64:
+        raise ConfigurationError("Invalid Argon2 concurrency configuration")
+    return int(raw)
