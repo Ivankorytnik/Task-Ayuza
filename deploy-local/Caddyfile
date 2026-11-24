@@ -7,5 +7,8 @@ https://localhost:8443 {
 		root * /srv/demo
 		file_server
 	}
-	reverse_proxy backend:8000
+	# Overwrite, never append: a client-sent X-Forwarded-For must not reach the backend.
+	reverse_proxy backend:8000 {
+		header_up X-Forwarded-For {remote_host}
+	}
 }

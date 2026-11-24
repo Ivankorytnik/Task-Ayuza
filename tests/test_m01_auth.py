@@ -18,7 +18,7 @@ from sqlalchemy.exc import DBAPIError
 import backend.auth as auth_module
 from backend.auth import AuthService, AuthError, digest, execute, one, clock
 from backend.main import app
-from backend.passwords import HASHER, normalize_login, validate_password
+from backend.passwords import GATE, HASHER, normalize_login, validate_password
 from test_m01_foundation import _test_url
 
 PASSWORD='Synthetic durable пароль 908!'
@@ -75,7 +75,8 @@ def test_policy_and_argon_measurement():
         t=time.perf_counter(); encoded=HASHER.hash(PASSWORD); durations.append(time.perf_counter()-t)
         assert '$argon2id$v=19$m=65536,t=3,p=1$' in encoded
         assert HASHER.verify(encoded,PASSWORD)
-        assert not auth_module.verify(encoded,PASSWORD+' ')
+        with GATE.slot():
+            assert not auth_module.verify(encoded,PASSWORD+' ')
     with ThreadPoolExecutor(max_workers=4) as pool:
         t=time.perf_counter(); list(pool.map(HASHER.hash,[PASSWORD]*4)); parallel=time.perf_counter()-t
     print(f'ARGON2 single_seconds={durations}; four_concurrent_seconds={parallel:.3f}; configured_memory=64MiB/operation; process_peak_RSS_KiB={resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}',flush=True)
@@ -280,7 +281,7 @@ def test_audit_failure_rolls_back(service):
     with patch('backend.auth.event',side_effect=broken):
         rejected(lambda:service.reset_password(uid),503)
         rejected(lambda:service.deactivate(uid),503)
-        rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD),503)
+        rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD,ip='192.0.2.93'),503)
         rejected(lambda:service.logout(s['token'],s['csrf_token']),503)
         rejected(lambda:service.renew(s['token'],s['csrf_token']),503)
     assert dict(read_user(service,uid))==dict(before)
@@ -604,3 +605,293 @@ def test_sequential_bootstrap_multiple_tabs_latest_csrf_wins(service):
     rejected(lambda: service.renew(session['token'], original_csrf), 403)
     rejected(lambda: service.renew(session['token'], tab_b['csrf_token']), 403)
     service.renew(session['token'], tab_c['csrf_token'])
+
+
+def attempts_for_ip(service, ip):
+    with service.engine.connect() as c:
+        return execute(c,'SELECT count(*) FROM task_ayuza.login_attempts WHERE ip_key=:key',key=service.key('ip',ip)).scalar_one()
+
+
+def prelogins_for_ip(service, ip):
+    with service.engine.connect() as c:
+        row=one(c,'SELECT issued_count FROM task_ayuza.prelogin_limits WHERE ip_key=:key',key=service.key('prelogin-ip',ip))
+    return row['issued_count'] if row else 0
+
+
+def test_trusted_proxy_configuration_fails_closed():
+    from backend.auth_http import trusted_proxies
+    from backend.config import ConfigurationError
+    import ipaddress
+    with patch.dict(os.environ,{'TASK_AYUZA_TRUSTED_PROXIES':' 10.0.0.0/8, 198.51.100.40 ,2001:db8::1'}):
+        assert trusted_proxies()==(ipaddress.ip_network('10.0.0.0/8'),ipaddress.ip_network('198.51.100.40/32'),ipaddress.ip_network('2001:db8::1/128'))
+    with patch.dict(os.environ,{'TASK_AYUZA_TRUSTED_PROXIES':''}):
+        assert trusted_proxies()==()
+    for bad in ('10.0.0.1/8','proxy.local','10.0.0.0/8;1.2.3.4','*','::ffff:198.51.100.40','::ffff:0:0/96'):
+        with patch.dict(os.environ,{'TASK_AYUZA_TRUSTED_PROXIES':bad}), pytest.raises(ConfigurationError):
+            trusted_proxies()
+
+
+def test_http_client_ip_from_trusted_proxy_only(service):
+    import ipaddress
+    uid,name,pw=user(service)
+    origin={'Origin':'https://test.local'}
+    def attempt(client,headers):
+        pre=client.get('/api/v1/auth/prelogin',headers={**origin,**headers})
+        assert pre.status_code==200
+        bad=client.post('/api/v1/auth/login',json={'login':name,'password':'wrong '+pw},
+                        headers={**origin,**headers,'X-CSRF-Token':pre.json()['csrf_token']})
+        assert bad.status_code==401
+    # Untrusted peer: forwarding headers are ignored, the TCP peer is charged.
+    with TestClient(app,base_url='https://test.local',client=('198.51.100.41',1234)) as client:
+        app.state.trusted_proxies=(ipaddress.ip_network('198.51.100.40/32'),)
+        attempt(client,{'X-Forwarded-For':'203.0.113.160'})
+        assert attempts_for_ip(service,'198.51.100.41')==1 and attempts_for_ip(service,'203.0.113.160')==0
+        assert prelogins_for_ip(service,'198.51.100.41')==1 and prelogins_for_ip(service,'203.0.113.160')==0
+    # Trusted proxy (plus a trusted inner hop): the right-most untrusted hop is the client,
+    # a client-forged left-most value is ignored, the proxy address is never charged.
+    with TestClient(app,base_url='https://test.local',client=('198.51.100.40',1234)) as client:
+        app.state.trusted_proxies=(ipaddress.ip_network('198.51.100.40/32'),ipaddress.ip_network('10.0.0.0/8'))
+        attempt(client,{'X-Forwarded-For':'192.0.2.250, 203.0.113.161, 10.1.2.3'})
+        assert attempts_for_ip(service,'203.0.113.161')==1
+        assert attempts_for_ip(service,'192.0.2.250')==attempts_for_ip(service,'198.51.100.40')==attempts_for_ip(service,'10.1.2.3')==0
+        # Two clients behind one proxy have separate prelogin quotas (30/IP/15 min).
+        def fresh(xff):
+            client.cookies.clear()  # anonymous issuance each time, no session reuse
+            return client.get('/api/v1/auth/prelogin',headers={**origin,'X-Forwarded-For':xff}).status_code
+        assert [fresh('203.0.113.162') for _ in range(30)]==[200]*30
+        assert fresh('203.0.113.162')==429
+        assert fresh('203.0.113.163')==200
+        # Trusted peer without a usable client hop fails closed and charges nobody.
+        for headers in ({},{'X-Forwarded-For':''},{'X-Forwarded-For':'not-an-ip'},{'X-Forwarded-For':'10.1.2.3'},
+                        {'X-Forwarded-For':'203.0.113.164, garbage'}):
+            client.cookies.clear()
+            response=client.get('/api/v1/auth/prelogin',headers={**origin,**headers})
+            assert response.status_code==503 and 'set-cookie' not in response.headers
+        assert prelogins_for_ip(service,'198.51.100.40')==0 and prelogins_for_ip(service,'203.0.113.164')==0
+        app.state.trusted_proxies=()
+
+
+def test_argon2_gate_caps_simultaneous_operations():
+    import backend.passwords as passwords
+    from backend.config import argon2_max_concurrent
+    from backend.config import ConfigurationError
+    running=0;peak=0;guard=Lock()
+    class Probe:
+        def hash(self,value):
+            nonlocal running,peak
+            with guard:
+                running+=1;peak=max(peak,running)
+            time.sleep(0.05)
+            with guard:running-=1
+            return 'probe'
+    try:
+        GATE.configure(2,wait=5)
+        with patch.object(passwords,'HASHER',Probe()):
+            def work(_):
+                with GATE.slot():
+                    return passwords.hash_password('x')
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                assert list(pool.map(work,range(16)))==['probe']*16
+        assert peak==2
+        # Every Argon2id call must hold a slot; nesting in one thread does not self-deadlock.
+        for fn in (lambda:passwords.hash_password(PASSWORD),lambda:passwords.verify('$argon2id$x',PASSWORD)):
+            with pytest.raises(RuntimeError):fn()
+        GATE.configure(1,wait=0)
+        with GATE.slot():
+            with GATE.slot():
+                assert passwords.verify(HASHER.hash(PASSWORD),PASSWORD)
+        for bad in (0,65,True,'4',1.5):
+            with pytest.raises(ValueError):GATE.configure(bad)
+    finally:
+        GATE.configure(4)
+    with patch.dict(os.environ,{'TASK_AYUZA_ARGON2_MAX_CONCURRENT':' 8 '}):
+        assert argon2_max_concurrent()==8
+    with patch.dict(os.environ,{},clear=False):
+        os.environ.pop('TASK_AYUZA_ARGON2_MAX_CONCURRENT',None)
+        assert argon2_max_concurrent()==4
+    for bad in ('0','65','-1','four','',' ','\u00b2','\u0664'):
+        with patch.dict(os.environ,{'TASK_AYUZA_ARGON2_MAX_CONCURRENT':bad}),pytest.raises(ConfigurationError):
+            argon2_max_concurrent()
+
+
+def hold_gate():
+    """Occupy every slot from another thread until the returned release() is called."""
+    import threading
+    taken=threading.Event();done=threading.Event()
+    def holder():
+        with GATE.slot():
+            taken.set();done.wait(10)
+    thread=threading.Thread(target=holder);thread.start();assert taken.wait(5)
+    def release():
+        done.set();thread.join(5)
+    return release
+
+
+def test_busy_argon2_gate_fails_fast_without_side_effects(service):
+    uid,name,s=normal(service)
+    pre=service.prelogin(ip='203.0.113.170')
+    with service.engine.connect() as c:
+        audits=execute(c,'SELECT count(*) FROM task_ayuza.audit_events').scalar_one()
+    before=read_user(service,uid)
+    try:
+        GATE.configure(1,wait=0.05)
+        release=hold_gate()
+        try:
+            started=time.perf_counter()
+            rejected(lambda:service.login(name,PASSWORD,'203.0.113.170',pre['token'],pre['csrf_token']),503)
+            assert time.perf_counter()-started<1
+            rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD,ip='203.0.113.170'),503)
+            rejected(lambda:service.reset_password(uid),503)
+        finally:
+            release()
+        # Nothing was charged, consumed, changed or audited while busy.
+        assert attempts_for_ip(service,'203.0.113.170')==0
+        assert dict(read_user(service,uid))==dict(before)
+        with service.engine.connect() as c:
+            assert execute(c,'SELECT count(*) FROM task_ayuza.audit_events').scalar_one()==audits
+        assert service.me(s['token'])['id']==str(uid)
+        fresh=service.login(name,PASSWORD,'203.0.113.170',pre['token'],pre['csrf_token'])
+        assert fresh['kind']=='normal' and attempts_for_ip(service,'203.0.113.170')==1
+    finally:
+        GATE.configure(4)
+
+
+def test_http_busy_argon2_gate_is_503(service):
+    uid,name,pw=user(service)
+    origin={'Origin':'https://test.local'}
+    with TestClient(app,base_url='https://test.local',client=('203.0.113.171',1234)) as client:
+        pre=client.get('/api/v1/auth/prelogin',headers=origin)
+        try:
+            GATE.configure(1,wait=0.05)
+            release=hold_gate()
+            try:
+                response=client.post('/api/v1/auth/login',json={'login':name,'password':pw},
+                                     headers={**origin,'X-CSRF-Token':pre.json()['csrf_token']})
+            finally:
+                release()
+        finally:
+            GATE.configure(4)
+        assert response.status_code==503 and response.json()=={'detail':'Authentication service busy'}
+        assert response.headers['cache-control']=='no-store' and 'set-cookie' not in response.headers
+        assert attempts_for_ip(service,'203.0.113.171')==0
+
+
+def test_ipv6_limits_per_64_and_mapped_ipv4(service):
+    from backend.auth import limiter_address
+    assert limiter_address('2001:db8:1:2::1')==limiter_address('2001:db8:1:2:ffff:ffff:ffff:ffff')=='2001:db8:1:2::/64'
+    assert limiter_address('2001:db8:1:3::1')=='2001:db8:1:3::/64'
+    assert limiter_address('fe80::1%eth0')=='fe80::/64'
+    assert limiter_address('::ffff:203.0.113.172')==limiter_address('203.0.113.172')=='203.0.113.172'
+    for bad in ('','testclient','2001:db8::/64','203.0.113.300'):
+        with pytest.raises(ValueError):limiter_address(bad)
+    # A host rotating addresses inside its /64 shares one prelogin quota (30/15 min).
+    issued=[service.prelogin(ip=f'2001:db8:1:2::{n:x}') for n in range(1,31)]
+    assert len(issued)==30
+    rejected(lambda:service.prelogin(ip='2001:db8:1:2:abcd::1'),429)
+    assert service.prelogin(ip='2001:db8:1:3::1')['kind']=='prelogin'
+    # Login attempts from one /64 and from mapped IPv4 are charged to one key each.
+    uid,name,pw=user(service)
+    for ip in ('2001:db8:1:4::1','2001:db8:1:4::2','::ffff:203.0.113.172','203.0.113.172'):
+        pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
+        rejected(lambda:service.login(name,'wrong '+pw,ip,pre['token'],pre['csrf_token']))
+    assert attempts_for_ip(service,'2001:db8:1:4::/64')==2 and attempts_for_ip(service,'203.0.113.172')==2
+    assert attempts_for_ip(service,'2001:db8:1:4::1')==0 and attempts_for_ip(service,'::ffff:203.0.113.172')==0
+
+
+def test_http_mapped_ipv4_proxy_peer_is_trusted(service):
+    import ipaddress
+    with TestClient(app,base_url='https://test.local',client=('::ffff:198.51.100.42',1234)) as client:
+        app.state.trusted_proxies=(ipaddress.ip_network('198.51.100.42/32'),)
+        try:
+            response=client.get('/api/v1/auth/prelogin',headers={'Origin':'https://test.local','X-Forwarded-For':'::ffff:203.0.113.173'})
+        finally:
+            app.state.trusted_proxies=()
+    assert response.status_code==200
+    assert prelogins_for_ip(service,'203.0.113.173')==1 and prelogins_for_ip(service,'198.51.100.42')==0
+
+
+def attempts_for_login(service, name):
+    with service.engine.connect() as c:
+        return execute(c,'SELECT count(*) FROM task_ayuza.login_attempts WHERE login_key=:key',key=service.key('login',name)).scalar_one()
+
+
+def test_wrong_current_password_is_limited_and_audited(service):
+    uid,name,s=normal(service)
+    assert attempts_for_login(service,name)==2  # two logins so far
+    before=read_user(service,uid)
+    ip='203.0.113.180'
+    # CSRF or a missing current password is refused before any charge.
+    rejected(lambda:service.change_password(s['token'],'x'*43,PASSWORD+'2',PASSWORD,ip=ip),403)
+    rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',None,ip=ip))
+    rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD),503)  # no IP: fail closed
+    assert attempts_for_login(service,name)==2 and attempts_for_ip(service,ip)==0
+    for n in range(3):
+        rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2','wrong '+PASSWORD,ip=ip))
+    assert attempts_for_login(service,name)==5 and attempts_for_ip(service,ip)==3
+    with service.engine.connect() as c:
+        rows=execute(c,"""SELECT * FROM task_ayuza.audit_events WHERE entity_id=:uid AND session_id=:sid
+                          AND action='auth.login_failed' ORDER BY occurred_at""",uid=uid,sid=s['session_id']).mappings().all()
+        dump=json.dumps([dict(r) for r in rows],default=str)
+    assert len(rows)==3 and all(r['entity_kind']=='user' for r in rows)
+    for secret in (PASSWORD,'wrong '+PASSWORD,s['token'],s['csrf_token'],ip):assert secret not in dump
+    # The shared login budget is exhausted: even the right password, and a fresh login, now get 429.
+    rejected(lambda:service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD,ip=ip),429)
+    pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
+    rejected(lambda:service.login(name,PASSWORD,'192.0.2.94',pre['token'],pre['csrf_token']),429)
+    assert dict(read_user(service,uid))==dict(before)
+    assert service.me(s['token'])['id']==str(uid)
+
+
+def test_right_current_password_still_changes_once_charged(service):
+    uid,name,s=normal(service)
+    service.change_password(s['token'],s['csrf_token'],PASSWORD+'2',PASSWORD,ip='203.0.113.181')
+    assert attempts_for_login(service,name)==3 and attempts_for_ip(service,'203.0.113.181')==1
+    rejected(lambda:service.me(s['token']))
+    assert login(service,name,PASSWORD+'2')['kind']=='normal'
+    # Temporary-password sessions need no current password and are not charged.
+    uid2,name2,pw2=user(service)
+    t=login(service,name2,pw2)
+    service.change_password(t['token'],t['csrf_token'],PASSWORD)
+    assert attempts_for_login(service,name2)==1
+
+
+def test_http_wrong_current_password_charges_client_ip(service):
+    uid,name,s=normal(service)
+    with TestClient(app,base_url='https://test.local',client=('203.0.113.182',1234)) as client:
+        client.cookies.set('__Host-ay_session',s['token'])
+        response=client.post('/api/v1/auth/password',json={'new_password':PASSWORD+'2','current_password':'wrong '+PASSWORD},
+                             headers={'Origin':'https://test.local','X-CSRF-Token':s['csrf_token']})
+    assert response.status_code==401 and response.json()=={'detail':'Authentication failed'}
+    assert 'wrong' not in response.text and attempts_for_ip(service,'203.0.113.182')==1
+
+
+def test_over_limit_request_needs_no_argon2_slot(service):
+    uid,name,pw=user(service)
+    for _ in range(5):
+        pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
+        rejected(lambda:service.login(name,'wrong '+pw,'203.0.113.190',pre['token'],pre['csrf_token']))
+    pre=service.prelogin(ip='192.0.2.' + str(secrets.randbelow(220)+10))
+    try:
+        GATE.configure(1,wait=5)
+        release=hold_gate()
+        try:
+            started=time.perf_counter()
+            # The limiter answers before the gate: a held gate neither delays nor turns this into 503.
+            rejected(lambda:service.login(name,pw,'203.0.113.190',pre['token'],pre['csrf_token']),429)
+            assert time.perf_counter()-started<2
+        finally:
+            release()
+    finally:
+        GATE.configure(4)
+    assert attempts_for_login(service,name)==5
+
+
+def test_http_password_change_with_unusable_client_address_is_503(service):
+    uid,name,s=normal(service)
+    with TestClient(app,base_url='https://test.local') as client:  # peer host is 'testclient', not an IP
+        client.cookies.set('__Host-ay_session',s['token'])
+        response=client.post('/api/v1/auth/password',json={'new_password':PASSWORD+'2','current_password':PASSWORD},
+                             headers={'Origin':'https://test.local','X-CSRF-Token':s['csrf_token']})
+    assert response.status_code==503 and response.json()=={'detail':'Authentication service unavailable'}
+    assert attempts_for_login(service,name)==2
+    assert service.me(s['token'])['id']==str(uid)

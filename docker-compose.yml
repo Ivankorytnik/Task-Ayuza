@@ -6,6 +6,7 @@ services:
       POSTGRES_USER: ayuza_admin
       POSTGRES_PASSWORD: ${TA_ADMIN_PASSWORD}
     volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ayuza_admin"]
       interval: 5s
@@ -14,6 +15,7 @@ services:
   init:
     build: .
     command: python scripts/local_init.py
+    networks: [internal]
     environment: &dbenv
       TA_DB_HOST: db
       TA_ADMIN_USER: ayuza_admin
@@ -26,22 +28,35 @@ services:
     restart: "no"
   backend:
     build: .
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    # The app alone decides the client IP from TASK_AYUZA_TRUSTED_PROXIES.
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --no-proxy-headers
+    networks: [internal]
     environment:
       TASK_AYUZA_DATABASE_URL: postgresql+psycopg://task_ayuza_runtime:${TA_RUNTIME_PW}@db:5432/task_ayuza_test
       TASK_AYUZA_ORIGIN: https://localhost:8443
       TASK_AYUZA_AUTH_HMAC_KEY: ${TA_HMAC_KEY}
       TASK_AYUZA_OUTBOX_INTERVAL: "30"
+      # Only the Caddy container below; its X-Forwarded-For carries the real client.
+      TASK_AYUZA_TRUSTED_PROXIES: 172.31.250.10
     depends_on:
       init: {condition: service_completed_successfully}
   proxy:
     image: caddy:2
     ports: ["127.0.0.1:8443:8443"]
+    networks:
+      internal:
+        ipv4_address: 172.31.250.10
     volumes:
       - ./deploy-local/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./demo:/srv/demo:ro
       - caddy_data:/data
     depends_on: [backend]
+networks:
+  internal:
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+          ip_range: 172.31.250.128/25  # dynamic addresses never collide with the proxy's .10
 volumes:
   pgdata:
   caddy_data:

@@ -10,13 +10,15 @@ import hmac
 import ipaddress
 import secrets
 import uuid
+from contextlib import contextmanager
 from datetime import timedelta
 from typing import Callable
 
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from backend.passwords import HASHER, normalize_login, temporary_password, validate_password, verify
+from backend.passwords import (GATE, Argon2Busy, hash_password, normalize_login, temporary_password,
+                               validate_password, verify)
 
 
 class AuthError(Exception):
@@ -43,6 +45,18 @@ def clock(c):
     return execute(c, 'SELECT clock_timestamp()').scalar_one()
 
 
+def limiter_address(ip) -> str:
+    """Limiter identity of a client address. One IPv6 /64 is one client: a single host
+    usually controls the whole /64, so per-address keys would let it rotate past 100/IP
+    and 30/IP. IPv4-mapped IPv6 is the IPv4 client. Raises ValueError for non-addresses."""
+    address = ipaddress.ip_address(ip)
+    if address.version == 6:
+        if address.ipv4_mapped:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.IPv6Network((int(address) >> 64 << 64, 64)))
+    return str(address)
+
+
 AUTH_ACTIONS = frozenset({'user_created','password_reset','password_changed','deactivated',
                          'login_failed','login_limited','login','logout','renewed'})
 
@@ -59,13 +73,24 @@ def event(c, action, *, user_id=None, session_id=None, request_id):
         entity=user_id or session_id or uuid.uuid4(), action='auth.' + action, request=request_id)
 
 
+@contextmanager
+def argon2_slot():
+    """Bounded wait for an Argon2id slot for operations without a limiter charge."""
+    try:
+        with GATE.slot():
+            yield
+    except Argon2Busy:
+        raise AuthError(503, 'Authentication service busy') from None
+
+
 class AuthService:
     def __init__(self, engine, hmac_key: bytes):
         if len(hmac_key) < 32:
             raise ValueError('Authentication key must contain at least 32 bytes')
         self.engine = engine
         self.hmac_key = hmac_key
-        self.dummy_hash = HASHER.hash(secrets.token_urlsafe(32))
+        with argon2_slot():
+            self.dummy_hash = hash_password(secrets.token_urlsafe(32))
 
     def transaction(self, operation: Callable):
         """At most two retries; rollback includes audit. No external side effects inside."""
@@ -95,7 +120,7 @@ class AuthService:
 
     def reserve(self, login, ip, request_id):
         login_key = self.key('login', login)
-        ip_key = self.key('ip', str(ipaddress.ip_address(ip)))
+        ip_key = self.key('ip', limiter_address(ip))
         # Ordered transaction-scoped advisory locks serialize BOTH intersecting limits.
         # Truncated HMAC collisions only over-serialize; counts use full HMAC keys.
         locks = sorted({int.from_bytes(x[:8], 'big', signed=True) for x in (login_key, ip_key)})
@@ -115,12 +140,29 @@ class AuthService:
                 if counts['ips'] >= 100:
                     self._limited_event(c, 'ip', ip_key, now, request_id)
                 return False
+            attempt = uuid.uuid4()
             execute(c, '''INSERT INTO task_ayuza.login_attempts
                 (id,login_key,ip_key,attempted_at) VALUES (:id,:login,:ip,:now)''',
-                id=uuid.uuid4(), login=login_key, ip=ip_key, now=now)
-            return True
-        if not self.transaction(operation):
+                id=attempt, login=login_key, ip=ip_key, now=now)
+            return attempt
+        attempt = self.transaction(operation)
+        if not attempt:
             raise AuthError(429, 'Too many login attempts')
+        return attempt
+
+    def _with_argon2(self, attempt, operation):
+        """Run an Argon2-bearing transaction in a gate slot. The limiter is charged
+        first, outside the slot, so requests it rejects never occupy a slot; if no
+        slot frees in time the just-reserved technical attempt row is withdrawn
+        (no audit), so a busy answer charges nothing."""
+        try:
+            with GATE.slot():
+                return self.transaction(operation)
+        except Argon2Busy:
+            if attempt is not None:
+                self.transaction(lambda c: execute(
+                    c, 'DELETE FROM task_ayuza.login_attempts WHERE id=:id', id=attempt))
+            raise AuthError(503, 'Authentication service busy') from None
 
     def _session(self, c, *, user=None, kind='prelogin'):
         now = clock(c)
@@ -144,7 +186,7 @@ class AuthService:
         if ip is None:
             raise AuthError(503, 'Authentication service unavailable')
         try:
-            ip_key = self.key('prelogin-ip', str(ipaddress.ip_address(ip)))
+            ip_key = self.key('prelogin-ip', limiter_address(ip))
         except ValueError:
             raise AuthError(503, 'Authentication service unavailable') from None
 
@@ -248,7 +290,6 @@ class AuthService:
             # Invalid syntax has no account but still uses the same stable key pipeline.
             normalized = login.strip().lower()
             valid_login = False
-        self.reserve(normalized, ip, request_id)
         def operation(c):
             u = one(c, 'SELECT * FROM task_ayuza.users WHERE login_normalized=:login FOR UPDATE', login=normalized) if valid_login else None
             ref = self._lookup(c, token)
@@ -264,7 +305,7 @@ class AuthService:
             result = self._session(c, user=u, kind='password' if u['must_change_password'] else 'normal')
             event(c, 'login', user_id=u['id'], session_id=result['session_id'], request_id=request_id)
             return result
-        result = self.transaction(operation)
+        result = self._with_argon2(self.reserve(normalized, ip, request_id), operation)
         if result is None:
             raise AuthError()
         return result
@@ -304,20 +345,49 @@ class AuthService:
         execute(c, 'UPDATE task_ayuza.users SET auth_version=auth_version+1 WHERE id=:id', id=uid)
         execute(c, 'UPDATE task_ayuza.sessions SET revoked_at=clock_timestamp() WHERE user_id=:id AND revoked_at IS NULL', id=uid)
 
-    def change_password(self, token, csrf, new_password, current_password=None, request_id=None):
+    def change_password(self, token, csrf, new_password, current_password=None, request_id=None, ip=None):
+        """A normal session proves the current password through the login limiter
+        (5/login + 100/IP, charged before Argon2id); a wrong one is audited as
+        auth.login_failed on the user with the normal session's ID."""
         if not csrf:
             raise AuthError(403, 'Request verification failed')
         validate_password(new_password)
+        request_id = request_id or uuid.uuid4()
+        # Verify session and CSRF before charging an attempt; the user lock and all
+        # remaining checks are repeated in run(), so no user row lock is taken here.
+        def precheck(c):
+            s = self._locked_session(c, self._lookup(c, token)['id'], csrf)
+            u = one(c, 'SELECT login_normalized FROM task_ayuza.users WHERE id=:id',
+                    id=s['user_id']) if s['user_id'] else None
+            if u is None or s['kind'] not in {'normal', 'password'}:
+                raise AuthError()
+            return s['kind'], u['login_normalized']
+        kind, login = self.transaction(precheck)
+        if kind == 'normal':
+            if current_password is None:
+                raise AuthError()
+            try:
+                limiter_address(ip)
+            except (TypeError, ValueError):
+                # Never let a bad address surface as the policy ValueError (422) of the route.
+                raise AuthError(503, 'Authentication service unavailable') from None
         def run(c):
             u,s = self._authorized(c, token, csrf, allow_password=True)
-            if s['kind'] == 'normal' and (current_password is None or not verify(u['password_hash'], current_password)):
+            if s['kind'] != kind or u['login_normalized'] != login:
                 raise AuthError()
-            encoded = HASHER.hash(new_password)
+            if s['kind'] == 'normal' and not verify(u['password_hash'], current_password):
+                event(c, 'login_failed', user_id=u['id'], session_id=s['id'], request_id=request_id)
+                return False
+            encoded = hash_password(new_password)
             execute(c, '''UPDATE task_ayuza.users SET password_hash=:hash,
                 must_change_password=false,temporary_expires_at=NULL WHERE id=:id''', hash=encoded,id=u['id'])
             self._revoke(c,u['id'])
-            event(c,'password_changed',user_id=u['id'],session_id=s['id'],request_id=request_id or uuid.uuid4())
-        self.transaction(run)
+            event(c,'password_changed',user_id=u['id'],session_id=s['id'],request_id=request_id)
+            return True
+        attempt = self.reserve(login, ip, request_id) if kind == 'normal' else None
+        changed = self._with_argon2(attempt, run)
+        if not changed:
+            raise AuthError()
 
     def create_user(self, organization_id, login, display_name, request_id=None):
         """Closed service function. Caller authorization belongs to M01.4, no HTTP route."""
@@ -325,7 +395,8 @@ class AuthService:
         if not display_name.strip() or len(display_name)>200:
             raise ValueError('Invalid display name')
         password = temporary_password()
-        encoded = HASHER.hash(password)
+        with argon2_slot():
+            encoded = hash_password(password)
         uid = uuid.uuid4()
         def run(c):
             execute(c, '''INSERT INTO task_ayuza.users
@@ -338,7 +409,8 @@ class AuthService:
 
     def reset_password(self, uid, request_id=None):
         password = temporary_password()
-        encoded = HASHER.hash(password)
+        with argon2_slot():
+            encoded = hash_password(password)
         def run(c):
             if not self._locked_user(c,uid):
                 raise AuthError()

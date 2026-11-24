@@ -1,6 +1,8 @@
 """Local password policy and fixed Argon2id parameters. Never log inputs."""
 import re
 import secrets
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 from argon2 import PasswordHasher, Type
@@ -10,6 +12,62 @@ HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=1,
                         salt_len=16, hash_len=32, type=Type.ID)
 COMMON = frozenset(line.casefold() for filename in ('common_passwords.txt', 'common_passwords_10k.txt')
                    for line in Path(__file__).with_name(filename).read_text().splitlines())
+
+
+class Argon2Busy(RuntimeError):
+    """No Argon2id slot became free in time; callers answer 503 without side effects."""
+
+
+class Argon2Gate:
+    """Process-wide cap on simultaneous Argon2id operations (each needs 64 MiB).
+
+    Peak Argon2 memory of one worker process is limit x 64 MiB; of a deployment,
+    workers x limit x 64 MiB. Parameters of Argon2id itself are never weakened.
+    A slot is re-entrant within one thread, which runs only one operation at a time.
+    The wait is short so that waiting requests do not tie up the shared threadpool
+    (one Argon2id takes about 0.15-0.2 s). configure() is for startup only: slots
+    already held on the previous semaphore are not counted against a new one.
+    """
+    def __init__(self, limit=4, wait=0.25):
+        self._local = threading.local()
+        self.configure(limit, wait)
+
+    def configure(self, limit, wait=0.25):
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 64 or not 0 <= wait <= 10:
+            raise ValueError('Invalid Argon2 concurrency limit')
+        self.limit, self.wait = limit, wait
+        self._semaphore = threading.BoundedSemaphore(limit)
+
+    def held(self):
+        return getattr(self._local, 'held', False)
+
+    @contextmanager
+    def slot(self):
+        if self.held():
+            yield
+            return
+        semaphore = self._semaphore
+        if not semaphore.acquire(timeout=self.wait):
+            raise Argon2Busy()
+        self._local.held = True
+        try:
+            yield
+        finally:
+            self._local.held = False
+            semaphore.release()
+
+
+GATE = Argon2Gate()
+
+
+def _require_slot():
+    if not GATE.held():
+        raise RuntimeError('Argon2id operation outside the concurrency gate')
+
+
+def hash_password(password: str) -> str:
+    _require_slot()
+    return HASHER.hash(password)
 
 
 def normalize_login(value: str) -> str:
@@ -30,6 +88,7 @@ def validate_password(value: str) -> None:
 
 
 def verify(encoded: str, password: str) -> bool:
+    _require_slot()
     try:
         return HASHER.verify(encoded, password)
     except (VerificationError, InvalidHashError, UnicodeEncodeError):

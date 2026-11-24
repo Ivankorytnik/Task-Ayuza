@@ -1,4 +1,5 @@
 """HTTPS cookie authentication routes; no public user management endpoints."""
+import ipaddress
 import os
 from urllib.parse import urlsplit
 
@@ -22,6 +23,52 @@ def configured_origin():
     except ValueError:
         raise ConfigurationError('Invalid authentication origin') from None
     return origin
+
+
+def trusted_proxies():
+    """Exact reverse-proxy addresses/networks from TASK_AYUZA_TRUSTED_PROXIES; empty trusts none."""
+    networks = []
+    for part in os.environ.get('TASK_AYUZA_TRUSTED_PROXIES', '').split(','):
+        if part.strip():
+            try:
+                network = ipaddress.ip_network(part.strip(), strict=True)
+                # Peers are folded from ::ffff:a.b.c.d to IPv4, so a mapped entry would never match.
+                if network.version == 6 and network.subnet_of(ipaddress.ip_network('::ffff:0:0/96')):
+                    raise ValueError()
+            except ValueError:
+                raise ConfigurationError('Invalid trusted proxy configuration') from None
+            networks.append(network)
+    return tuple(networks)
+
+
+def client_ip(request):
+    """Limiter source address. Forwarding headers count only from a configured trusted proxy.
+
+    X-Forwarded-For is read right to left: the first hop that is not itself a trusted
+    proxy is the client. A trusted peer without a usable hop fails closed instead of
+    charging every user to the proxy address.
+    """
+    peer = request.client.host if request.client else ''
+    networks = getattr(request.app.state, 'trusted_proxies', ())
+    try:
+        address = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer  # AuthService rejects it fail-closed.
+    if address.version == 6 and address.ipv4_mapped:
+        address = address.ipv4_mapped  # dual-stack listener reporting an IPv4 proxy
+    if not any(address in network for network in networks):
+        return str(address)
+    hops = [hop.strip() for value in request.headers.getlist('x-forwarded-for') for hop in value.split(',')]
+    for hop in reversed(hops):
+        try:
+            address = ipaddress.ip_address(hop)
+        except ValueError:
+            break
+        if address.version == 6 and address.ipv4_mapped:
+            address = address.ipv4_mapped
+        if not any(address in network for network in networks):
+            return str(address)
+    raise AuthError(503, 'Authentication service unavailable')
 
 
 def verify_origin(request):
@@ -67,16 +114,16 @@ class PasswordInput(BaseModel):
 def prelogin(request: Request,response: Response):
     # Same-origin check required even for bootstrap. Caller sends Referer/Origin.
     verify_origin(request)
-    ip = request.client.host if request.client else ''
+    ip = client_ip(request)
     return issued(response,request.app.state.auth.prelogin(ip=ip, token=request.cookies.get(COOKIE)))
 
 
 @router.post('/login')
 def login(data: LoginInput,request: Request,response: Response):
     token,csrf=credentials(request)
-    # Deliberately ignore all client-supplied forwarding headers. ASGI server must
-    # run with --no-proxy-headers unless a separately reviewed trusted proxy exists.
-    ip=request.client.host if request.client else ''
+    # Forwarding headers are honoured only from TASK_AYUZA_TRUSTED_PROXIES (client_ip).
+    # The ASGI server runs with --no-proxy-headers so that this is the only decision point.
+    ip=client_ip(request)
     result=request.app.state.auth.login(data.login,data.password.get_secret_value(),ip,token,csrf)
     return issued(response,result)
 
@@ -106,7 +153,7 @@ def password(data: PasswordInput,request: Request,response: Response):
     token,csrf=credentials(request)
     try:
         request.app.state.auth.change_password(token,csrf,data.new_password.get_secret_value(),
-            data.current_password.get_secret_value() if data.current_password else None)
+            data.current_password.get_secret_value() if data.current_password else None,ip=client_ip(request))
     except ValueError:
         raise AuthError(422,'Password does not satisfy policy') from None
     response.delete_cookie(COOKIE,secure=True,httponly=True,samesite='lax',path='/')

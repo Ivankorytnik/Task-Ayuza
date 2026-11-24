@@ -23,7 +23,13 @@ ws.onmessage = (m) => {
   if (d.id && pend.has(d.id)) { pend.get(d.id)(d); pend.delete(d.id); }
   if (d.method === 'Runtime.exceptionThrown') problems.push(`exception: ${JSON.stringify(d.params).slice(0, 300)}`);
   if (d.method === 'Log.entryAdded' && /Content Security Policy|Refused to/i.test(d.params.entry.text)) problems.push(`csp: ${d.params.entry.text.slice(0, 300)}`);
+  // Prelogin bootstrap is a same-origin GET: it carries no Origin, so the server relies on Referer.
+  // Record what the real browser actually sends and gets back.
+  if (d.method === 'Network.requestWillBeSent' && d.params.request.url.endsWith('/api/v1/auth/prelogin')) prelogins.set(d.params.requestId, {});
+  if (d.method === 'Network.requestWillBeSentExtraInfo') extraHeaders.set(d.params.requestId, d.params.headers);
+  if (d.method === 'Network.responseReceived' && prelogins.has(d.params.requestId)) prelogins.get(d.params.requestId).status = d.params.response.status;
 };
+const prelogins = new Map(); const extraHeaders = new Map();
 const send = (method, params = {}) => new Promise((r) => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
 const ev = async (e) => (await send('Runtime.evaluate', { expression: e, awaitPromise: true, returnByValue: true })).result.result.value;
 const text = () => ev("document.body.innerText");
@@ -40,7 +46,7 @@ const signOut = async () => { await click('Выйти'); return until("!!documen
 const loggedIn = () => until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выйти')");
 const setSelect = (selector, value) => ev(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
 
-await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
+await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable'); await send('Network.enable');
 await send('Page.navigate', { url: `${base}/app/` });
 check('login form shown', await until("!!document.querySelector('#login')"));
 await fill('#login', user.login); await fill('#password', user.password);
@@ -214,6 +220,14 @@ check('mobile: card opens', await until("document.body.innerText.includes('Бл�
 check('mobile: card fits the screen', await fits(), await overflow());
 check('mobile: buttons are at least 32px tall', await ev("[...document.querySelectorAll('button')].every((b) => b.getBoundingClientRect().height >= 32)"));
 await signOut();
+
+const header = (h, name) => Object.entries(h || {}).find(([k]) => k.toLowerCase() === name)?.[1];
+const sent = [...prelogins].map(([rid, r]) => ({ ...r, referer: header(extraHeaders.get(rid), 'referer'), origin: header(extraHeaders.get(rid), 'origin') }));
+check('prelogin bootstrap requested by the real client', sent.length > 0);
+check('every prelogin carried a same-origin Referer and was accepted',
+  sent.every((r) => r.status === 200 && typeof r.referer === 'string' && r.referer.startsWith(`${base}/`) && (r.origin === undefined || r.origin === base)),
+  JSON.stringify(sent.map((r) => ({ status: r.status, referer: r.referer ? new URL(r.referer).origin : null, origin: r.origin ?? null }))));
+console.log(`prelogin requests: ${sent.length}, statuses ${[...new Set(sent.map((r) => r.status))].join(',')}, Origin header sent: ${sent.filter((r) => r.origin).length}`);
 
 console.log(steps.join('\n'));
 ch.kill();
