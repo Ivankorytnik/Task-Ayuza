@@ -233,3 +233,74 @@ def test_b08_system_roles_owner_only_and_two_approvers(service, mfa, grants, mig
     assert grants.revoke_system_role(owner.token, owner.csrf, a1.id, 'access_approver', first['version'])['revoked'] is True
     second = [r for r in rows(migrator, "SELECT version FROM task_ayuza.system_role_assignments WHERE user_id=:u AND role_code='access_approver'", u=a2.id)][0]
     assert status(lambda: grants.revoke_system_role(owner.token, owner.csrf, a2.id, 'access_approver', second['version'])) == 409
+
+
+def test_b09_bootstrap_first_workspace_admin(service, mfa, grants, acl, migrator):
+    """Owner decision 24.11.2026: a system_owner with fresh MFA appoints the first workspace_admin."""
+    owner, _, _ = with_mfa(service, mfa)
+    admin_sql(migrator, '''INSERT INTO task_ayuza.system_role_assignments (id, user_id, role_code, reason)
+        VALUES (:id, :u, 'system_owner', 'synthetic bootstrap')''', id=uuid.uuid4(), u=owner.id)
+    sysadmin, _, _ = with_mfa(service, mfa)
+    admin_sql(migrator, '''INSERT INTO task_ayuza.system_role_assignments (id, user_id, role_code, reason)
+        VALUES (:id, :u, 'system_admin', 'synthetic bootstrap')''', id=uuid.uuid4(), u=sysadmin.id)
+    ws = acl.create_workspace(sysadmin.token, sysadmin.csrf, 'Bootstrap W', 'Europe/Moscow')['id']
+    first, second, outsider = person(service), person(service), person(service)
+    bootstrap = lambda who, target, w=ws: grants.bootstrap_workspace_admin(who.token, who.csrf, w, target.id)
+    # Not an owner (even a system admin), self-appointment, unknown workspace: refused, nothing written.
+    assert status(lambda: bootstrap(sysadmin, first)) == 403
+    assert status(lambda: bootstrap(owner, owner)) == 403
+    assert status(lambda: bootstrap(owner, first, str(uuid.uuid4()))) == 404
+    admin_sql(migrator, 'UPDATE task_ayuza.sessions SET mfa_verified_at = NULL WHERE user_id=:u', u=owner.id)
+    assert status(lambda: bootstrap(owner, first)) == 403          # MFA is not fresh
+    assert rows(migrator, 'SELECT 1 FROM task_ayuza.workspace_members WHERE workspace_id=:w', w=ws) == []
+    # A participant is promoted; the change is audited with the owner as actor.
+    admin_sql(migrator, 'UPDATE task_ayuza.sessions SET mfa_verified_at = clock_timestamp() WHERE user_id=:u', u=owner.id)
+    admin_sql(migrator, '''INSERT INTO task_ayuza.workspace_members (id, workspace_id, user_id, role)
+        VALUES (:id, :w, :u, 'participant')''', id=uuid.uuid4(), w=ws, u=first.id)
+    result = bootstrap(owner, first)
+    assert result['created'] is False
+    member = rows(migrator, 'SELECT role, active FROM task_ayuza.workspace_members WHERE workspace_id=:w AND user_id=:u',
+                  w=ws, u=first.id)
+    assert member == [{'role': 'workspace_admin', 'active': True}]
+    events = rows(migrator, '''SELECT actor_id, action, workspace_id FROM task_ayuza.audit_events
+        WHERE entity_id=:e ORDER BY occurred_at''', e=result['id'])
+    assert events[-1] == {'actor_id': owner.id, 'action': 'acl.workspace_member_changed', 'workspace_id': ws}
+    # Once the workspace has an administrator, the owner can no longer add one: the admin does.
+    assert status(lambda: bootstrap(owner, second)) == 409
+    # The new administrator manages members through the normal path (needs their own fresh MFA).
+    admin_sql(migrator, 'UPDATE task_ayuza.sessions SET mfa_verified_at = clock_timestamp() WHERE user_id=:u', u=first.id)
+    acl.set_workspace_member(first.token, first.csrf, ws, second.id, 'participant')
+    assert status(lambda: acl.set_workspace_member(outsider.token, outsider.csrf, ws, outsider.id, 'participant')) in (403, 404)
+    # An inactive target is refused in a workspace that has no administrator yet.
+    ws2 = acl.create_workspace(sysadmin.token, sysadmin.csrf, 'Bootstrap W2', 'Europe/Moscow')['id']
+    service.deactivate(outsider.id)
+    assert status(lambda: bootstrap(owner, outsider, ws2)) == 422
+
+
+def test_b10_bootstrap_workspace_admin_concurrent_once(service, mfa, grants, acl, migrator):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    # Two different owners: their own user/session locks do not serialize them, only the workspace lock does.
+    owners = [with_mfa(service, mfa)[0] for _ in range(2)]
+    for owner in owners:
+        admin_sql(migrator, '''INSERT INTO task_ayuza.system_role_assignments (id, user_id, role_code, reason)
+            VALUES (:id, :u, 'system_owner', 'synthetic bootstrap')''', id=uuid.uuid4(), u=owner.id)
+    sysadmin, _, _ = with_mfa(service, mfa)
+    admin_sql(migrator, '''INSERT INTO task_ayuza.system_role_assignments (id, user_id, role_code, reason)
+        VALUES (:id, :u, 'system_admin', 'synthetic bootstrap')''', id=uuid.uuid4(), u=sysadmin.id)
+    ws = acl.create_workspace(sysadmin.token, sysadmin.csrf, 'Bootstrap race', 'Europe/Moscow')['id']
+    targets = [person(service), person(service)]
+    barrier = Barrier(2)
+
+    def attempt(pair):
+        owner, target = pair
+        barrier.wait(10)
+        try:
+            return grants.bootstrap_workspace_admin(owner.token, owner.csrf, ws, target.id)
+        except AclError as error:
+            return error.status
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(attempt, zip(owners, targets)))
+    assert sorted(str(r) if isinstance(r, int) else 'ok' for r in results) == ['409', 'ok']
+    assert len(rows(migrator, '''SELECT 1 FROM task_ayuza.workspace_members
+        WHERE workspace_id=:w AND role='workspace_admin' AND active''', w=ws)) == 1

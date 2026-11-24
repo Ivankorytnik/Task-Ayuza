@@ -12,7 +12,7 @@ import hashlib
 import uuid
 from datetime import timedelta
 
-from backend.acl import (AclError, GRANT_CAPABILITIES, _forbidden, _not_found, as_uuid, audit,
+from backend.acl import (AclError, GRANT_CAPABILITIES, _forbidden, _not_found, _upsert, as_uuid, audit,
                          check_version, clean_text, mfa_mutation)
 from backend.auth import AuthService, clock, execute, one
 
@@ -184,4 +184,36 @@ class GrantService:
                   action='acl.system_role_revoked', workspace_id=None,
                   old={'role_code': role_code, 'revoked': False}, new={'role_code': role_code, 'revoked': True})
             return {'id': updated['id'], 'version': updated['version'], 'revoked': True}
+        return mfa_mutation(self.auth, token, csrf, run)
+
+    def bootstrap_workspace_admin(self, token, csrf, workspace_id, user_id, request_id=None):
+        """First administrator of a workspace that has none (owner decision 24.11.2026).
+
+        Only a system_owner with a fresh MFA verification may do it, never for themselves,
+        and only while the workspace has no active workspace_admin: from then on members are
+        managed by the workspace's own administrators. Audited like any membership change.
+        """
+        wid, target = as_uuid(workspace_id), as_uuid(user_id)
+        request_id = as_uuid(request_id) if request_id else uuid.uuid4()
+
+        def run(c, u, s):
+            if not has_role(c, u['id'], 'system_owner'):
+                raise _forbidden()
+            if target == u['id']:
+                raise _forbidden()  # no self-grant
+            # The workspace row lock serializes concurrent bootstraps of the same workspace.
+            if one(c, '''SELECT 1 AS x FROM task_ayuza.workspaces WHERE id=:id AND organization_id=:org
+                    FOR UPDATE''', id=wid, org=u['organization_id']) is None:
+                raise _not_found()
+            if one(c, '''SELECT 1 AS x FROM task_ayuza.workspace_members
+                    WHERE workspace_id=:w AND role='workspace_admin' AND active''', w=wid) is not None:
+                raise AclError(409, 'Workspace already has an administrator')
+            _active_user(c, u, target)
+            existing = one(c, '''SELECT version FROM task_ayuza.workspace_members
+                WHERE workspace_id=:w AND user_id=:u''', w=wid, u=target)  # a participant may be promoted
+            return _upsert(c, u, s, table='workspace_members', keys={'workspace_id': wid, 'user_id': target},
+                           values={'role': 'workspace_admin', 'active': True}, entity_kind='workspace_member',
+                           actions=('acl.workspace_member_added', 'acl.workspace_member_changed'),
+                           workspace_id=wid, expected=existing['version'] if existing else None,
+                           request_id=request_id)
         return mfa_mutation(self.auth, token, csrf, run)
