@@ -604,3 +604,67 @@ def test_sequential_bootstrap_multiple_tabs_latest_csrf_wins(service):
     rejected(lambda: service.renew(session['token'], original_csrf), 403)
     rejected(lambda: service.renew(session['token'], tab_b['csrf_token']), 403)
     service.renew(session['token'], tab_c['csrf_token'])
+
+
+def attempts_for_ip(service, ip):
+    with service.engine.connect() as c:
+        return execute(c,'SELECT count(*) FROM task_ayuza.login_attempts WHERE ip_key=:key',key=service.key('ip',ip)).scalar_one()
+
+
+def prelogins_for_ip(service, ip):
+    with service.engine.connect() as c:
+        row=one(c,'SELECT issued_count FROM task_ayuza.prelogin_limits WHERE ip_key=:key',key=service.key('prelogin-ip',ip))
+    return row['issued_count'] if row else 0
+
+
+def test_trusted_proxy_configuration_fails_closed():
+    from backend.auth_http import trusted_proxies
+    from backend.config import ConfigurationError
+    import ipaddress
+    with patch.dict(os.environ,{'TASK_AYUZA_TRUSTED_PROXIES':' 10.0.0.0/8, 198.51.100.40 ,2001:db8::1'}):
+        assert trusted_proxies()==(ipaddress.ip_network('10.0.0.0/8'),ipaddress.ip_network('198.51.100.40/32'),ipaddress.ip_network('2001:db8::1/128'))
+    with patch.dict(os.environ,{'TASK_AYUZA_TRUSTED_PROXIES':''}):
+        assert trusted_proxies()==()
+    for bad in ('10.0.0.1/8','proxy.local','10.0.0.0/8;1.2.3.4','*'):
+        with patch.dict(os.environ,{'TASK_AYUZA_TRUSTED_PROXIES':bad}), pytest.raises(ConfigurationError):
+            trusted_proxies()
+
+
+def test_http_client_ip_from_trusted_proxy_only(service):
+    import ipaddress
+    uid,name,pw=user(service)
+    origin={'Origin':'https://test.local'}
+    def attempt(client,headers):
+        pre=client.get('/api/v1/auth/prelogin',headers={**origin,**headers})
+        assert pre.status_code==200
+        bad=client.post('/api/v1/auth/login',json={'login':name,'password':'wrong '+pw},
+                        headers={**origin,**headers,'X-CSRF-Token':pre.json()['csrf_token']})
+        assert bad.status_code==401
+    # Untrusted peer: forwarding headers are ignored, the TCP peer is charged.
+    with TestClient(app,base_url='https://test.local',client=('198.51.100.41',1234)) as client:
+        app.state.trusted_proxies=(ipaddress.ip_network('198.51.100.40/32'),)
+        attempt(client,{'X-Forwarded-For':'203.0.113.160'})
+        assert attempts_for_ip(service,'198.51.100.41')==1 and attempts_for_ip(service,'203.0.113.160')==0
+        assert prelogins_for_ip(service,'198.51.100.41')==1 and prelogins_for_ip(service,'203.0.113.160')==0
+    # Trusted proxy (plus a trusted inner hop): the right-most untrusted hop is the client,
+    # a client-forged left-most value is ignored, the proxy address is never charged.
+    with TestClient(app,base_url='https://test.local',client=('198.51.100.40',1234)) as client:
+        app.state.trusted_proxies=(ipaddress.ip_network('198.51.100.40/32'),ipaddress.ip_network('10.0.0.0/8'))
+        attempt(client,{'X-Forwarded-For':'192.0.2.250, 203.0.113.161, 10.1.2.3'})
+        assert attempts_for_ip(service,'203.0.113.161')==1
+        assert attempts_for_ip(service,'192.0.2.250')==attempts_for_ip(service,'198.51.100.40')==attempts_for_ip(service,'10.1.2.3')==0
+        # Two clients behind one proxy have separate prelogin quotas (30/IP/15 min).
+        def fresh(xff):
+            client.cookies.clear()  # anonymous issuance each time, no session reuse
+            return client.get('/api/v1/auth/prelogin',headers={**origin,'X-Forwarded-For':xff}).status_code
+        assert [fresh('203.0.113.162') for _ in range(30)]==[200]*30
+        assert fresh('203.0.113.162')==429
+        assert fresh('203.0.113.163')==200
+        # Trusted peer without a usable client hop fails closed and charges nobody.
+        for headers in ({},{'X-Forwarded-For':''},{'X-Forwarded-For':'not-an-ip'},{'X-Forwarded-For':'10.1.2.3'},
+                        {'X-Forwarded-For':'203.0.113.164, garbage'}):
+            client.cookies.clear()
+            response=client.get('/api/v1/auth/prelogin',headers={**origin,**headers})
+            assert response.status_code==503 and 'set-cookie' not in response.headers
+        assert prelogins_for_ip(service,'198.51.100.40')==0 and prelogins_for_ip(service,'203.0.113.164')==0
+        app.state.trusted_proxies=()

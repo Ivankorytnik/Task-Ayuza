@@ -1,4 +1,5 @@
 """HTTPS cookie authentication routes; no public user management endpoints."""
+import ipaddress
 import os
 from urllib.parse import urlsplit
 
@@ -22,6 +23,44 @@ def configured_origin():
     except ValueError:
         raise ConfigurationError('Invalid authentication origin') from None
     return origin
+
+
+def trusted_proxies():
+    """Exact reverse-proxy addresses/networks from TASK_AYUZA_TRUSTED_PROXIES; empty trusts none."""
+    networks = []
+    for part in os.environ.get('TASK_AYUZA_TRUSTED_PROXIES', '').split(','):
+        if part.strip():
+            try:
+                networks.append(ipaddress.ip_network(part.strip(), strict=True))
+            except ValueError:
+                raise ConfigurationError('Invalid trusted proxy configuration') from None
+    return tuple(networks)
+
+
+def client_ip(request):
+    """Limiter source address. Forwarding headers count only from a configured trusted proxy.
+
+    X-Forwarded-For is read right to left: the first hop that is not itself a trusted
+    proxy is the client. A trusted peer without a usable hop fails closed instead of
+    charging every user to the proxy address.
+    """
+    peer = request.client.host if request.client else ''
+    networks = getattr(request.app.state, 'trusted_proxies', ())
+    try:
+        address = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer  # AuthService rejects it fail-closed.
+    if not any(address in network for network in networks):
+        return str(address)
+    hops = [hop.strip() for value in request.headers.getlist('x-forwarded-for') for hop in value.split(',')]
+    for hop in reversed(hops):
+        try:
+            address = ipaddress.ip_address(hop)
+        except ValueError:
+            break
+        if not any(address in network for network in networks):
+            return str(address)
+    raise AuthError(503, 'Authentication service unavailable')
 
 
 def verify_origin(request):
@@ -67,16 +106,16 @@ class PasswordInput(BaseModel):
 def prelogin(request: Request,response: Response):
     # Same-origin check required even for bootstrap. Caller sends Referer/Origin.
     verify_origin(request)
-    ip = request.client.host if request.client else ''
+    ip = client_ip(request)
     return issued(response,request.app.state.auth.prelogin(ip=ip, token=request.cookies.get(COOKIE)))
 
 
 @router.post('/login')
 def login(data: LoginInput,request: Request,response: Response):
     token,csrf=credentials(request)
-    # Deliberately ignore all client-supplied forwarding headers. ASGI server must
-    # run with --no-proxy-headers unless a separately reviewed trusted proxy exists.
-    ip=request.client.host if request.client else ''
+    # Forwarding headers are honoured only from TASK_AYUZA_TRUSTED_PROXIES (client_ip).
+    # The ASGI server runs with --no-proxy-headers so that this is the only decision point.
+    ip=client_ip(request)
     result=request.app.state.auth.login(data.login,data.password.get_secret_value(),ip,token,csrf)
     return issued(response,result)
 

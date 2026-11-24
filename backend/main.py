@@ -14,7 +14,7 @@ from backend.api_items import router as items_router
 from backend.api_ops import router as ops_router
 from backend.api_work import router as work_router
 from backend.auth import AuthError, AuthService
-from backend.auth_http import configured_origin, router
+from backend.auth_http import configured_origin, router, trusted_proxies
 from backend.config import ConfigurationError
 from backend.db import make_engine, verify_schema
 from backend.exports import ExportsService
@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
         app.state.work = ExportsService(app.state.auth)
         app.state.acl = AclService(app.state.auth)
         app.state.auth_origin = origin
+        app.state.trusted_proxies = trusted_proxies()
         interval = outbox_interval()
         app.state.outbox_stats = {}
         task = asyncio.create_task(outbox_loop(app.state.work, interval, app.state.outbox_stats)) if interval else None
