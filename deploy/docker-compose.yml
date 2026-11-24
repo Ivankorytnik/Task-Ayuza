@@ -60,6 +60,20 @@ services:
     depends_on:
       init: {condition: service_completed_successfully}
       tailscale: {condition: service_started}
+  admin:
+    # Operator commands (scripts/admin.py), run by admin.ps1; never started by "up".
+    build: {context: .., dockerfile: Dockerfile}
+    profiles: [tools]
+    entrypoint: ["python", "scripts/admin.py"]
+    stdin_open: true
+    tty: true
+    environment:
+      TASK_AYUZA_DATABASE_URL: postgresql+psycopg://task_ayuza_runtime:${TA_RUNTIME_PW}@db:5432/task_ayuza_test
+      TASK_AYUZA_MIGRATOR_URL: postgresql+psycopg://task_ayuza_migrator:${TA_MIGRATOR_PW}@db:5432/task_ayuza_test
+      TASK_AYUZA_AUTH_HMAC_KEY: ${TA_HMAC_KEY}
+      TASK_AYUZA_MFA_KEY: ${TA_MFA_KEY}
+    depends_on:
+      db: {condition: service_healthy}
 volumes:
   pgdata:
   tsstate:
