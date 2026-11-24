@@ -366,8 +366,11 @@ class AuthService:
         if kind == 'normal':
             if current_password is None:
                 raise AuthError()
-            if ip is None:
-                raise AuthError(503, 'Authentication service unavailable')
+            try:
+                limiter_address(ip)
+            except (TypeError, ValueError):
+                # Never let a bad address surface as the policy ValueError (422) of the route.
+                raise AuthError(503, 'Authentication service unavailable') from None
         def run(c):
             u,s = self._authorized(c, token, csrf, allow_password=True)
             if s['kind'] != kind or u['login_normalized'] != login:

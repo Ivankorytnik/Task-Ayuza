@@ -885,3 +885,13 @@ def test_over_limit_request_needs_no_argon2_slot(service):
         GATE.configure(4)
     assert attempts_for_login(service,name)==5
 
+
+def test_http_password_change_with_unusable_client_address_is_503(service):
+    uid,name,s=normal(service)
+    with TestClient(app,base_url='https://test.local') as client:  # peer host is 'testclient', not an IP
+        client.cookies.set('__Host-ay_session',s['token'])
+        response=client.post('/api/v1/auth/password',json={'new_password':PASSWORD+'2','current_password':PASSWORD},
+                             headers={'Origin':'https://test.local','X-CSRF-Token':s['csrf_token']})
+    assert response.status_code==503 and response.json()=={'detail':'Authentication service unavailable'}
+    assert attempts_for_login(service,name)==2
+    assert service.me(s['token'])['id']==str(uid)
