@@ -9,3 +9,7 @@ __pycache__/
 *.db
 *.dump
 *.backup
+# Local deployment: encrypted backups and the backup private key never go to Git.
+deploy/backups/
+deploy/backup-keys/
+*.dump.age

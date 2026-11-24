@@ -91,6 +91,31 @@ for ($i = 0; $i -lt 45 -and -not $ok; $i++) {
     } catch { }
 }
 
+# Backups: one age key pair; the public half encrypts every copy, the private half
+# (deploy\backup-keys\backup-identity.txt) is needed only to restore.
+New-Item -ItemType Directory -Force backups, backup-keys | Out-Null
+if (-not (Test-Path backup-keys\backup-identity.txt)) {
+    Write-Host 'Creating the backup encryption key...'
+    Invoke-Docker @compose run --rm --no-deps backup age-keygen -o /keys/backup-identity.txt
+    icacls backup-keys /inheritance:r /grant:r "$($env:USERDOMAIN)\$($env:USERNAME):(OI)(CI)F" > $null
+}
+$recipient = (& docker @compose run --rm --no-deps backup age-keygen -y /keys/backup-identity.txt | Out-String).Trim()
+if ($recipient -notmatch '^age1[0-9a-z]{58}$') { throw 'Could not read the backup public key.' }
+Set-EnvValue 'TA_BACKUP_RECIPIENT' $recipient
+if (-not (Select-String -Path .env -Pattern '^TA_BACKUP_COPY_TO=' -Quiet)) {
+    $target = Read-Host 'Tailscale name of the work computer for a second backup copy (empty to skip)'
+    if ($target -and $target -notmatch '^[A-Za-z0-9-]+$') { throw 'Use the short Tailscale machine name, e.g. work-pc.' }
+    Set-EnvValue 'TA_BACKUP_COPY_TO' $target
+}
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\backup.ps1`""
+$trigger = New-ScheduledTaskTrigger -Daily -At 13:00
+$taskSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+Register-ScheduledTask -TaskName 'Task-Ayuza backup' -Action $action -Trigger $trigger -Settings $taskSettings -Force | Out-Null
+Write-Host 'Daily backup scheduled (13:00, or as soon as the computer is on). First backup and restore check now...'
+& powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\backup.ps1" -RestoreCheck
+if ($LASTEXITCODE -ne 0) { Write-Host 'Backup or restore check FAILED, see deploy\backups\backup.log' -ForegroundColor Red }
+
 Write-Host ''
 if ($ok) {
     Write-Host "Task-Ayuza is up:  https://$name/app/" -ForegroundColor Green
