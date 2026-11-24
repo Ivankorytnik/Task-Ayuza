@@ -48,53 +48,66 @@ powershell -ExecutionPolicy Bypass -File deploy\setup.ps1
 
 ## Первичная настройка: организация, люди, пространство
 
-Регистрации через сайт нет намеренно, а административных экранов пока нет. Всё делается командой `deploy\admin.ps1` на этом компьютере (появляется после слияния PR #167). Пароли и коды MFA вводятся по запросу, в командной строке их нет. Нужны **два человека**: правила доступа требуют владельца системы и второго, другого утверждающего. Ниже это `ivan` (владелец) и `kollega`.
+Регистрации через сайт нет намеренно, а административных экранов пока нет. Всё делается командой `deploy\admin.ps1` на этом компьютере. Пароли и коды MFA вводятся по запросу, в командной строке их нет.
 
-Каждый вход тратит одну из 5 попыток на логин за 15 минут, и успешные тоже. Поэтому порядок важен, а свои команды каждый выполняет одной сессией.
+Правила доступа запрещают выдавать права самому себе: для setup нужны два разных участника, роль себе не выдаётся, себя администратором не назначают. **Пока вы работаете один**, нужны три учётные записи:
+
+| Учётная запись | Для чего | MFA |
+|---|---|---|
+| `ivan` | ежедневная работа на сайте | не обязательно |
+| `ivan-owner` | владелец системы, только для настройки | да |
+| `ivan-admin` | второй утверждающий, системный администратор и администратор пространства | да |
+
+Пока вы один, правило двух людей выполняется только формально: всё держится на ваших паролях и MFA. Используйте разные пароли и храните их в менеджере паролей. Для MFA подойдёт одно приложение с двумя записями.
+
+Каждый вход тратит одну из 5 попыток на логин за 15 минут, и успешные тоже. Поэтому свои команды выполняйте одной сессией (`session`).
 
 1. Организация и учётные записи. Временные пароли действуют 24 часа и показываются один раз:
    ```powershell
    deploy\admin.ps1 init-org "Название компании"
-   deploy\admin.ps1 create-user ivan "Иван Петров"
-   deploy\admin.ps1 create-user kollega "Имя Коллеги"
+   deploy\admin.ps1 create-user ivan "Иван"
+   deploy\admin.ps1 create-user ivan-owner "Иван (владелец системы)"
+   deploy\admin.ps1 create-user ivan-admin "Иван (администратор)"
    ```
-2. Каждый открывает ссылку, входит с временным паролем и задаёт постоянный (15–128 символов). **После смены пароля на сайт пока не входите.**
-3. Каждый подключает MFA: приложение Яндекс Ключ или Google Authenticator → «Ввести ключ вручную». **Резервные коды сохраните.**
+2. По ссылке войдите **в каждую** учётную запись с временным паролем и задайте постоянный (15–128 символов, у каждой свой). Выходите и входите в следующую.
+3. Подключите MFA для двух служебных записей: приложение Яндекс Ключ или Google Authenticator → «Ввести ключ вручную». **Резервные коды сохраните.**
    ```powershell
-   deploy\admin.ps1 enroll-mfa ivan
-   deploy\admin.ps1 enroll-mfa kollega
+   deploy\admin.ps1 enroll-mfa ivan-owner
+   deploy\admin.ps1 enroll-mfa ivan-admin
    ```
-4. Одноразовая процедура, владелец и второй утверждающий: `deploy\admin.ps1 setup ivan kollega`
-5. Владелец выдаёт коллеге роль системного администратора:
+4. Одноразовая процедура: `deploy\admin.ps1 setup ivan-owner ivan-admin`
+5. Роль системного администратора:
    ```powershell
-   deploy\admin.ps1 session ivan
-   ivan> grant-role kollega system_admin
-   ivan> exit
+   deploy\admin.ps1 session ivan-owner
+   ivan-owner> grant-role ivan-admin system_admin
+   ivan-owner> exit
    ```
-6. Коллега создаёт пространство и команду и включает владельца в команду:
+6. Пространство, команда и вы в команде:
    ```powershell
-   deploy\admin.ps1 session kollega
-   kollega> create-workspace "Работа"
-   kollega> create-team "Команда"
-   kollega> add-team-member "Команда" ivan
-   kollega> exit
+   deploy\admin.ps1 session ivan-admin
+   ivan-admin> create-workspace "Работа"
+   ivan-admin> create-team "Команда"
+   ivan-admin> add-team-member "Команда" ivan
+   ivan-admin> exit
    ```
-7. Владелец назначает первого администратора пространства. Себя нельзя, и только пока администратора нет:
+7. Первый администратор пространства (только пока его нет):
    ```powershell
-   deploy\admin.ps1 session ivan
-   ivan> first-workspace-admin "Работа" kollega
-   ivan> exit
+   deploy\admin.ps1 session ivan-owner
+   ivan-owner> first-workspace-admin "Работа" ivan-admin
+   ivan-owner> exit
    ```
-8. Администратор пространства добавляет людей и разрешает команде работать в нём:
+8. Вы — участник пространства, команда работает в нём:
    ```powershell
-   deploy\admin.ps1 session kollega
-   kollega> add-member "Работа" ivan participant
-   kollega> link-team "Работа" "Команда"
-   kollega> exit
+   deploy\admin.ps1 session ivan-admin
+   ivan-admin> add-member "Работа" ivan participant
+   ivan-admin> link-team "Работа" "Команда"
+   ivan-admin> exit
    ```
-9. Проверка: `deploy\admin.ps1 status`. Теперь оба входят по ссылке и работают.
+9. Проверка: `deploy\admin.ps1 status`. Дальше работайте на сайте под `ivan`.
 
-Новый сотрудник: `create-user`, затем `add-member` от администратора пространства и `add-team-member` от системного администратора. Забыл пароль: `deploy\admin.ps1 reset-password логин`, все его сессии при этом отзываются.
+**Когда появится коллега:** `create-user`, затем `add-member` от `ivan-admin` и `add-team-member` от `ivan-admin`. Он входит по той же ссылке. Позже роль утверждающего можно передать ему, тогда правило двух людей начнёт работать по-настоящему.
+
+**Забыли пароль:** `deploy\admin.ps1 reset-password логин`, все сессии этой учётной записи при этом отзываются.
 
 ## Что ещё нужно до работы с реальными данными
 
