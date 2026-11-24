@@ -30,7 +30,7 @@ services:
       db: {condition: service_healthy}
     restart: "no"
   tailscale:
-    image: tailscale/tailscale:v1.104.6
+    image: tailscale/tailscale:v1.104.7
     hostname: task-ayuza
     restart: unless-stopped
     environment:
