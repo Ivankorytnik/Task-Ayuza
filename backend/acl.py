@@ -233,6 +233,31 @@ def _upsert(c, u, s, *, table, keys, values, entity_kind, actions, workspace_id,
     return {'id': updated['id'], 'version': updated['version'], 'created': False}
 
 
+def _team_member(c, u, s, team, target, active, expected, request_id):
+    """Team membership change by a system administrator (inside mfa_mutation)."""
+    require_system_admin(c, u['id'])
+    _reject_self(u, target)  # a system administrator cannot join a team to reach data
+    if one(c, 'SELECT 1 AS x FROM task_ayuza.teams WHERE id=:id AND organization_id=:org',
+           id=team, org=u['organization_id']) is None:
+        raise _not_found()
+    _target_user(c, u, target, require_active=active)
+    return _upsert(c, u, s, table='team_members', keys={'team_id': team, 'user_id': target},
+                   values={'active': active}, entity_kind='team_member',
+                   actions=('acl.team_member_added', 'acl.team_member_changed'),
+                   workspace_id=None, expected=expected, request_id=request_id)
+
+
+def _workspace_member(c, u, s, wid, target, role, active, expected, request_id):
+    """Workspace membership change by that workspace's administrator (inside mfa_mutation)."""
+    require_workspace_admin(c, u['id'], wid)
+    _reject_self(u, target)
+    _target_user(c, u, target, require_active=active)
+    return _upsert(c, u, s, table='workspace_members', keys={'workspace_id': wid, 'user_id': target},
+                   values={'role': role, 'active': active}, entity_kind='workspace_member',
+                   actions=('acl.workspace_member_added', 'acl.workspace_member_changed'),
+                   workspace_id=wid, expected=expected, request_id=request_id)
+
+
 def mfa_mutation(auth: AuthService, token, csrf, run):
     """Administrative mutation: valid session, CSRF and a fresh MFA verification (D03)."""
     def guarded(c, u, s):
@@ -351,16 +376,7 @@ class AclService:
         request_id = as_uuid(request_id) if request_id else uuid.uuid4()
 
         def run(c, u, s):
-            require_system_admin(c, u['id'])
-            _reject_self(u, target)  # a system administrator cannot join a team to reach data
-            if one(c, 'SELECT 1 AS x FROM task_ayuza.teams WHERE id=:id AND organization_id=:org',
-                   id=team, org=u['organization_id']) is None:
-                raise _not_found()
-            _target_user(c, u, target, require_active=active)
-            return _upsert(c, u, s, table='team_members', keys={'team_id': team, 'user_id': target},
-                           values={'active': active}, entity_kind='team_member',
-                           actions=('acl.team_member_added', 'acl.team_member_changed'),
-                           workspace_id=None, expected=expected, request_id=request_id)
+            return _team_member(c, u, s, team, target, active, expected, request_id)
         return self._mutation(token, csrf, run)
 
     # ---- workspace administrator: members, allowed teams, delegated access ----
@@ -374,13 +390,7 @@ class AclService:
         request_id = as_uuid(request_id) if request_id else uuid.uuid4()
 
         def run(c, u, s):
-            require_workspace_admin(c, u['id'], wid)
-            _reject_self(u, target)
-            _target_user(c, u, target, require_active=active)
-            return _upsert(c, u, s, table='workspace_members', keys={'workspace_id': wid, 'user_id': target},
-                           values={'role': role, 'active': active}, entity_kind='workspace_member',
-                           actions=('acl.workspace_member_added', 'acl.workspace_member_changed'),
-                           workspace_id=wid, expected=expected, request_id=request_id)
+            return _workspace_member(c, u, s, wid, target, role, active, expected, request_id)
         return self._mutation(token, csrf, run)
 
     def set_workspace_team(self, token, csrf, workspace_id, team_id, active=True,
