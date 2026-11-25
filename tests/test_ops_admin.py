@@ -206,6 +206,7 @@ class QuickConsole(Console):
     def __init__(self):
         super().__init__()
         self.secret_prompts, self.mismatch = [], 0
+        self.on_new_password = None
 
     def password(self, login):
         return f'{PASSWORD}-{login}'
@@ -219,6 +220,8 @@ class QuickConsole(Console):
     def ask_secret(self, prompt):
         self.secret_prompts.append(prompt)
         self.current = re.search(r'for (\S+?)(?: \(|: )', prompt).group(1)
+        if self.on_new_password and prompt.startswith('New permanent'):
+            self.on_new_password(self.current)
         if self.mismatch and prompt.startswith('Repeat'):
             self.mismatch -= 1
             return 'not the same password'
@@ -234,6 +237,11 @@ def test_quickstart_one_person_in_one_command(service, migrator):
     """deploy/README.md quickstart: same services and checks as the single commands, resumable."""
     console = QuickConsole()
     console.mismatch = 1
+    def no_open_password_session(login):
+        # The 10-minute password-change session must not be open while the person thinks.
+        assert not rows(migrator, '''SELECT 1 AS x FROM task_ayuza.sessions s JOIN task_ayuza.users u ON u.id=s.user_id
+            WHERE u.login=:l AND s.kind='password' AND s.revoked_at IS NULL''', l=login)
+    console.on_new_password = no_open_password_session
     suffix = uuid.uuid4().hex[:6]
     me, owner, adm = f'ivan{suffix}', f'ivan{suffix}-owner', f'ivan{suffix}-admin'
     ws, team = f'Работа {suffix}', f'Команда {suffix}'
