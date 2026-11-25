@@ -80,8 +80,10 @@ powershell -ExecutionPolicy Bypass -File deploy\setup.ps1
 ### Быстрый путь: одна команда
 
 ```powershell
-deploy\admin.ps1 quickstart "Название компании"
+powershell -ExecutionPolicy Bypass -File deploy\admin.ps1 quickstart "Название компании"
 ```
+
+В Windows запуск `.ps1` по умолчанию запрещён («выполнение сценариев отключено»), поэтому здесь и ниже `deploy\admin.ps1 …` запускайте так: `powershell -ExecutionPolicy Bypass -File deploy\admin.ps1 …`.
 
 Команда выполняет шаги 1–9 ниже по порядку и через те же проверки: настоящие входы, CSRF, свежий код MFA, аудит. Правила доступа и двух участников не обходятся, меньше только набирать вручную. По ходу она попросит:
 
