@@ -22,6 +22,11 @@ passwords, MFA keys and backup codes) are printed once and never stored or logge
   status                                organization, people, roles, workspaces, teams
   session ACTOR                         sign in once, then run several ACTOR commands without the actor
                                         (each sign-in counts against the 5-per-15-minutes login limit)
+  quickstart ORG [--login ivan] [--name NAME] [--workspace Работа] [--team Команда]
+                                        one person, first run: the commands above in the documented order
+                                        for LOGIN, LOGIN-owner and LOGIN-admin; asks for each permanent
+                                        password and MFA code, never shows a temporary password, skips what
+                                        is already done (safe to run again after an interruption)
 """
 from __future__ import annotations
 
@@ -46,7 +51,7 @@ from backend.audit import OrganizationAlreadyExistsError, create_organization  #
 from backend.auth import AuthError, AuthService  # noqa: E402
 from backend.grants import ASSIGNABLE_ROLES, GrantService  # noqa: E402
 from backend.mfa import MfaService  # noqa: E402
-from backend.passwords import normalize_login  # noqa: E402
+from backend.passwords import normalize_login, validate_password  # noqa: E402
 from backend.setup import SetupError, complete_setup  # noqa: E402
 
 OPERATOR_IP = '127.0.0.1'   # the limiter still applies: 5 attempts per login, 100 per address
@@ -176,13 +181,14 @@ class Admin:
     def enroll_mfa(self, login):
         session = self.sign_in(login, mfa=False)
         enrolled = self.mfa.enroll(session['token'], session['csrf_token'])
-        self.out('Add this account to an authenticator app (Yandex Key, Google Authenticator, ...):')
+        self.out(f'Add {normalize_login(login)} to an authenticator app (Yandex Key, Google Authenticator, ...):')
         self.out(f'  setup key: {enrolled["secret"]}')
         self.out(f'  or link:   {enrolled["otpauth_uri"]}')
         self.out('Backup codes, each usable once. Keep them offline:')
         for code in enrolled['backup_codes']:
             self.out(f'  {code}')
-        self.mfa.confirm(session['token'], session['csrf_token'], self.ask('Code from the app to confirm: '))
+        self.mfa.confirm(session['token'], session['csrf_token'], self.ask(f'Code from the app for {login} to confirm: '))
+        session['mfa_at'] = time.monotonic()   # confirming also verifies this session
         self.out(f'MFA is enabled for {login}.')
 
     def setup(self, owner, approver):
@@ -237,6 +243,108 @@ class Admin:
         self.acl.set_team_member(s['token'], s['csrf_token'], tid, target_id)
         self.out(f'{target} is in team {team!r}.')
 
+    # ---- quickstart: one person, first run ----
+
+    def exists(self, sql, **params):
+        with self.runtime.connect() as c:
+            return c.execute(text(sql), params).first() is not None
+
+    def ask_new_password(self, login):
+        while True:
+            password = self.ask_secret(f'New permanent password for {login} (15-128 characters): ')
+            if password != self.ask_secret(f'Repeat the password for {login}: '):
+                self.out('error: the passwords do not match, try again')
+                continue
+            try:
+                validate_password(password)
+            except ValueError as error:
+                self.out(f'error: {error}')
+                continue
+            return password
+
+    def first_password(self, login, display_name, *, keep_session):
+        """Account with a permanent password chosen by the person. The temporary password stays
+        inside this process: it is used for the one sign-in that changes it and is never shown."""
+        key = normalize_login(login)
+        with self.runtime.connect() as c:
+            row = c.execute(text('SELECT id, must_change_password FROM task_ayuza.users WHERE login_normalized=:l'),
+                            {'l': key}).first()
+        if row is None:
+            _, temporary = self.auth.create_user(self.organization(), login, display_name)
+            self.out(f'User {key} created.')
+        elif row.must_change_password:   # an earlier run stopped before the change: a fresh temporary one
+            temporary = self.auth.reset_password(row.id)
+            self.out(f'User {key} still had a temporary password; it was replaced.')
+        else:
+            self.out(f'User {key} already exists; password unchanged.')
+            return
+        pre = self.auth.prelogin(ip=OPERATOR_IP)
+        s = self.auth.login(login, temporary, OPERATOR_IP, pre['token'], pre['csrf_token'])
+        del temporary
+        password = self.ask_new_password(key)
+        self.auth.change_password(s['token'], s['csrf_token'], password)   # revokes every session of the user
+        if keep_session:   # the next commands act as this account: one sign-in now instead of a prompt
+            pre = self.auth.prelogin(ip=OPERATOR_IP)
+            s = self.auth.login(login, password, OPERATOR_IP, pre['token'], pre['csrf_token'])
+            s['mfa_at'] = None
+            self.sessions[key] = s
+        del password
+        self.out(f'Permanent password set for {key}.')
+
+    def quickstart(self, org, login, name, workspace, team):
+        """deploy/README.md for one person, in one run. Every change goes through the same services
+        as the single commands: no rule is skipped, only the typing is."""
+        me = normalize_login(login)
+        owner, adm = f'{me}-owner', f'{me}-admin'
+        name = name or me
+        self.out(f'Quickstart for one person: {me} (daily work), {owner} (system owner), {adm} (administrator).')
+        self.out('Use a different password for each account and keep them in a password manager.')
+        self.init_org(org)
+        for who, title, keep in ((me, name, False), (owner, f'{name} (owner)', True), (adm, f'{name} (admin)', True)):
+            self.first_password(who, title, keep_session=keep)
+        for who in (owner, adm):
+            if self.exists('''SELECT 1 FROM task_ayuza.user_mfa m JOIN task_ayuza.users u ON u.id=m.user_id
+                    WHERE u.login_normalized=:l AND m.enabled_at IS NOT NULL''', l=who):
+                self.out(f'MFA is already enabled for {who}.')
+            else:
+                self.enroll_mfa(who)
+        has_role = lambda who, code: self.exists('''SELECT 1 FROM task_ayuza.system_role_assignments r
+            JOIN task_ayuza.users u ON u.id=r.user_id
+            WHERE u.login_normalized=:l AND r.role_code=:r AND r.revoked_at IS NULL''', l=who, r=code)
+        if not self.exists('SELECT 1 FROM task_ayuza.setup_state WHERE completed_at IS NOT NULL'):
+            self.setup(owner, adm)
+        elif has_role(owner, 'system_owner') and has_role(adm, 'access_approver'):
+            self.out('Setup is already completed.')
+        else:
+            raise OperatorError('Setup was completed for other accounts: continue with the single commands')
+        if has_role(adm, 'system_admin'):
+            self.out(f'{adm} already has system_admin.')
+        else:
+            self.grant_role(owner, adm, 'system_admin')
+        if self.exists('SELECT 1 FROM task_ayuza.workspaces WHERE name=:n AND archived_at IS NULL', n=workspace):
+            self.out(f'Workspace {workspace!r} already exists.')
+        else:
+            self.create_workspace(adm, workspace, 'Europe/Moscow')
+        if self.exists('SELECT 1 FROM task_ayuza.teams WHERE name=:n AND active', n=team):
+            self.out(f'Team {team!r} already exists.')
+        else:
+            self.create_team(adm, team)
+        wid, tid, my_id = self.named('workspaces', workspace), self.named('teams', team), self.user_id(me)
+        if not self.exists('SELECT 1 FROM task_ayuza.team_members WHERE team_id=:t AND user_id=:u AND active',
+                           t=tid, u=my_id):
+            self.add_team_member(adm, team, me)
+        if not self.exists('''SELECT 1 FROM task_ayuza.workspace_members
+                WHERE workspace_id=:w AND role='workspace_admin' AND active''', w=wid):
+            self.first_workspace_admin(owner, workspace, adm)
+        if not self.exists('SELECT 1 FROM task_ayuza.workspace_members WHERE workspace_id=:w AND user_id=:u AND active',
+                           w=wid, u=my_id):
+            self.add_member(adm, workspace, me, 'participant')
+        if not self.exists('SELECT 1 FROM task_ayuza.workspace_teams WHERE workspace_id=:w AND team_id=:t AND active',
+                           w=wid, t=tid):
+            self.link_team(adm, workspace, team)
+        self.status()
+        self.out(f'Done. Work on the website as {me}; use {owner} and {adm} only for administration.')
+
     def status(self):
         with self.runtime.connect() as c:
             q = lambda sql: c.execute(text(sql)).mappings().all()
@@ -270,6 +378,12 @@ def parser(cls=argparse.ArgumentParser):
         sp = sub.add_parser(name)
         for a in args:
             sp.add_argument(a)
+    sp = sub.add_parser('quickstart')
+    sp.add_argument('org')
+    sp.add_argument('--login', default='ivan')
+    sp.add_argument('--name', default='')
+    sp.add_argument('--workspace', default='Работа')
+    sp.add_argument('--team', default='Команда')
     sp = sub.add_parser('create-workspace')
     sp.add_argument('actor')
     sp.add_argument('name')

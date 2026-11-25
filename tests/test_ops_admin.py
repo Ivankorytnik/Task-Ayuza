@@ -199,3 +199,93 @@ def test_single_person_first_run_as_in_deploy_readme(service, migrator):
     tid = rows(migrator, 'SELECT id FROM task_ayuza.teams WHERE name=:n', n=team)[0]['id']
     mid = rows(migrator, 'SELECT id FROM task_ayuza.users WHERE login=:l', l=me)[0]['id']
     assert WorkService(service).create_task(s['token'], s['csrf_token'], wid, 'Solo task', mid, tid)['id']
+
+
+class QuickConsole(Console):
+    """Like Console, but the person is named in every prompt, and each account has its own password."""
+    def __init__(self):
+        super().__init__()
+        self.secret_prompts, self.mismatch = [], 0
+
+    def password(self, login):
+        return f'{PASSWORD}-{login}'
+
+    def out(self, line):
+        found = re.match(r'Add (\S+) to an authenticator app', str(line))
+        if found:
+            self.current = found.group(1)
+        super().out(line)
+
+    def ask_secret(self, prompt):
+        self.secret_prompts.append(prompt)
+        self.current = re.search(r'for (\S+?)(?: \(|: )', prompt).group(1)
+        if self.mismatch and prompt.startswith('Repeat'):
+            self.mismatch -= 1
+            return 'not the same password'
+        return self.password(self.current)
+
+    def ask(self, prompt):
+        if not prompt.endswith('> '):
+            self.current = re.search(r'for (\S+?)(?: to confirm)?: ', prompt).group(1)
+        return super().ask(prompt)
+
+
+def test_quickstart_one_person_in_one_command(service, migrator):
+    """deploy/README.md quickstart: same services and checks as the single commands, resumable."""
+    console = QuickConsole()
+    console.mismatch = 1
+    suffix = uuid.uuid4().hex[:6]
+    me, owner, adm = f'ivan{suffix}', f'ivan{suffix}-owner', f'ivan{suffix}-admin'
+    ws, team = f'Работа {suffix}', f'Команда {suffix}'
+    argv = ('quickstart', 'Synthetic', '--login', me, '--name', 'Ivan', '--workspace', ws, '--team', team)
+    # An interrupted earlier attempt left the daily account with a temporary password.
+    assert run(console, 'create-user', me, 'Ivan')[0] == 0
+
+    # This suite's one-time setup belongs to other people: quickstart stops there and says so.
+    code, out = run(console, *argv)
+    assert code == 1 and 'Setup was completed for other accounts' in out, out
+    assert f'User {me} still had a temporary password; it was replaced.' in out
+    assert 'error: the passwords do not match' in out
+    assert 'shown once' not in out and 'Temporary password' not in out      # never printed
+    users = {r['login']: r for r in rows(migrator, '''SELECT u.login, u.must_change_password,
+        m.enabled_at IS NOT NULL AS mfa FROM task_ayuza.users u LEFT JOIN task_ayuza.user_mfa m ON m.user_id=u.id
+        WHERE u.login IN (:l1, :l2, :l3)''', l1=me, l2=owner, l3=adm)}
+    assert all(not u['must_change_password'] for u in users.values()) and len(users) == 3
+    assert not users[me]['mfa'] and users[owner]['mfa'] and users[adm]['mfa']
+
+    # Stand in for the one-time setup, as the tests above do; the rerun continues from here.
+    with migrator.begin() as c:
+        for login, role in ((owner, 'system_owner'), (adm, 'access_approver')):
+            uid = c.execute(text('SELECT id FROM task_ayuza.users WHERE login=:l'), {'l': login}).scalar_one()
+            c.execute(text('''INSERT INTO task_ayuza.system_role_assignments (id, user_id, role_code, reason)
+                VALUES (:id, :u, :r, 'synthetic setup')'''), {'id': uuid.uuid4(), 'u': uid, 'r': role})
+    code, out = run(console, *argv)
+    assert code == 0 and 'error' not in out, out
+    assert f'User {owner} already exists; password unchanged.' in out and f'MFA is already enabled for {adm}' in out
+    assert 'Setup is already completed.' in out and f'{adm} now has system_admin' in out
+    assert f'{me}:participant' in out and f'{adm}:workspace_admin' in out and f'{adm} access_approver,system_admin' in out
+    assert f"Team '{team}' works in '{ws}'" in out
+
+    # Nothing left to do: a third run changes nothing and asks for no password or code.
+    prompts = len(console.secret_prompts)
+    code, out = run(console, *argv)
+    assert code == 0 and 'error' not in out and len(console.secret_prompts) == prompts
+    assert out.count('already') >= 7 and 'created' not in out
+
+    for login in (me, owner, adm):     # nobody is locked out by the 5-per-15-minutes limit
+        n = rows(migrator, 'SELECT count(*) AS n FROM task_ayuza.login_attempts WHERE login_key=:k',
+                 k=service.key('login', login))[0]['n']
+        assert n <= 4, (login, n)
+    # The rules still hold: the owner cannot make themselves a workspace administrator.
+    console.script = [f'first-workspace-admin "{ws}" {owner}']
+    assert 'error' in run(console, 'session', owner)[1]
+    # The daily account works on the website.
+    pre = service.prelogin(ip='198.51.100.153')
+    s = service.login(me, console.password(me), '198.51.100.153', pre['token'], pre['csrf_token'])
+    wid = rows(migrator, 'SELECT id FROM task_ayuza.workspaces WHERE name=:n', n=ws)[0]['id']
+    tid = rows(migrator, 'SELECT id FROM task_ayuza.teams WHERE name=:n', n=team)[0]['id']
+    mid = rows(migrator, 'SELECT id FROM task_ayuza.users WHERE login=:l', l=me)[0]['id']
+    assert WorkService(service).create_task(s['token'], s['csrf_token'], wid, 'Quickstart task', mid, tid)['id']
+    audit = str(rows(migrator, 'SELECT * FROM task_ayuza.audit_events'))
+    for secret in (*(console.password(x) for x in (me, owner, adm)), *console.secrets.values()):
+        assert secret not in audit
