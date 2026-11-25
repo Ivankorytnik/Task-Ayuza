@@ -102,7 +102,8 @@ if (-not (Test-Path backup-keys\backup-identity.txt)) {
 $recipient = (& docker @compose run --rm --no-deps backup age-keygen -y /keys/backup-identity.txt | Out-String).Trim()
 if ($recipient -notmatch '^age1[0-9a-z]{58}$') { throw 'Could not read the backup public key.' }
 Set-EnvValue 'TA_BACKUP_RECIPIENT' $recipient
-if (-not (Select-String -Path .env -Pattern '^TA_BACKUP_COPY_TO=' -Quiet)) {
+# Asked again while empty, so a skipped answer can be filled in by re-running setup.
+if (-not (Select-String -Path .env -Pattern '^TA_BACKUP_COPY_TO=.+' -Quiet)) {
     $target = Read-Host 'Tailscale name of the work computer for a second backup copy (empty to skip)'
     if ($target -and $target -notmatch '^[A-Za-z0-9-]+$') { throw 'Use the short Tailscale machine name, e.g. work-pc.' }
     Set-EnvValue 'TA_BACKUP_COPY_TO' $target

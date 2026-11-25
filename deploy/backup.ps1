@@ -41,11 +41,20 @@ $failed = $false
 if (-not (Invoke-Step 'encrypted backup' run --rm backup backup.sh)) { $failed = $true }
 
 $target = $settings['TA_BACKUP_COPY_TO']
-if (-not $failed -and $target) {
-    $latest = Get-ChildItem -Path backups -Filter 'task-ayuza-*.dump.age' |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not (Invoke-Step "copy $($latest.Name) to $target" exec -T tailscale tailscale file cp "/backups/$($latest.Name)" "${target}:")) {
+if (-not $failed -and -not $target) {
+    Write-Log 'SKIP copy to work computer: TA_BACKUP_COPY_TO is empty in deploy\.env'
+} elseif (-not $failed) {
+    # Taildrop only sends to online devices of the same Tailscale account; check first for a clear log line.
+    $targets = @(& docker @compose exec -T tailscale tailscale file cp --targets 2>&1 | ForEach-Object { "$_" })
+    if (-not ($targets | Where-Object { ($_ -split '\s+') -contains $target })) {
+        Write-Log "FAIL copy: '$target' is not a Taildrop target (not in this tailnet, offline or another account)"
         $failed = $true
+    } else {
+        $latest = Get-ChildItem -Path backups -Filter 'task-ayuza-*.dump.age' |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not (Invoke-Step "copy $($latest.Name) to $target" exec -T tailscale tailscale file cp "/backups/$($latest.Name)" "${target}:")) {
+            $failed = $true
+        }
     }
 }
 
