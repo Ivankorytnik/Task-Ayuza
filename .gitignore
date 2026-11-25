@@ -13,3 +13,6 @@ __pycache__/
 deploy/backups/
 deploy/backup-keys/
 *.dump.age
+
+# claude-code-starter: приватный бизнес-контекст (правило не снимает с индекса уже отслеживаемые файлы)
+/.business/
