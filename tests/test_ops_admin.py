@@ -249,7 +249,7 @@ def test_quickstart_one_person_in_one_command(service, migrator):
     assert 'shown once' not in out and 'Temporary password' not in out      # never printed
     users = {r['login']: r for r in rows(migrator, '''SELECT u.login, u.must_change_password,
         m.enabled_at IS NOT NULL AS mfa FROM task_ayuza.users u LEFT JOIN task_ayuza.user_mfa m ON m.user_id=u.id
-        WHERE u.login IN (:a, :b, :c)''', a=me, b=owner, c=adm)}
+        WHERE u.login IN (:l1, :l2, :l3)''', l1=me, l2=owner, l3=adm)}
     assert all(not u['must_change_password'] for u in users.values()) and len(users) == 3
     assert not users[me]['mfa'] and users[owner]['mfa'] and users[adm]['mfa']
 
