@@ -26,6 +26,8 @@ def test_n01_static_client_and_headers(client, service):
     assert "script-src 'self'" in csp and "default-src 'none'" in csp and 'worker-src' not in csp and "frame-ancestors 'none'" in csp and 'unsafe' not in csp
     assert page.headers['x-content-type-options'] == 'nosniff' and page.headers['referrer-policy'] == 'same-origin'
     assert page.headers['cache-control'] == 'no-store'
+    # DEPLOY-HARDEN-1: the origin is always HTTPS (Funnel serves 443 only), so browsers must never fall back to HTTP.
+    assert page.headers['strict-transport-security'] == 'max-age=31536000'
     for path, kind in (('app.js', 'javascript'), ('logic.js', 'javascript'), ('styles.css', 'css'),
                        ('manifest.webmanifest', 'json'), ('icon.svg', 'svg'), ('sw.js', 'javascript')):
         response = client.get(f'/app/{path}')
@@ -35,6 +37,7 @@ def test_n01_static_client_and_headers(client, service):
     assert client.get('/app/%2e%2e/backend/auth.py').status_code in (400, 404)
     api = client.get('/api/v1/auth/me')
     assert 'content-security-policy' not in api.headers and api.headers['x-content-type-options'] == 'nosniff'
+    assert api.headers['strict-transport-security'] == 'max-age=31536000'
 
 
 def test_n02_client_sources_are_safe():
