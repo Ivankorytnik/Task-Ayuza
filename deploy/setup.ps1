@@ -112,6 +112,14 @@ $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
 $trigger = New-ScheduledTaskTrigger -Daily -At 13:00
 $taskSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
 Register-ScheduledTask -TaskName 'Task-Ayuza backup' -Action $action -Trigger $trigger -Settings $taskSettings -Force | Out-Null
+# Restart: Docker Desktop starts only after sign-in, then start.ps1 brings the stack up and logs to
+# deploy\backups\start.log. Automatic sign-in after a restart is a manual step (deploy/README.md).
+$startAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSScriptRoot\start.ps1`""
+$startTrigger = New-ScheduledTaskTrigger -AtLogOn -User "$($env:USERDOMAIN)\$($env:USERNAME)"
+$startSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName 'Task-Ayuza start' -Action $startAction -Trigger $startTrigger -Settings $startSettings -Force | Out-Null
+Write-Host 'Start after sign-in scheduled (task "Task-Ayuza start").'
 Write-Host 'Daily backup scheduled (13:00, or as soon as the computer is on). First backup and restore check now...'
 & powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\backup.ps1" -RestoreCheck
 if ($LASTEXITCODE -ne 0) { Write-Host 'Backup or restore check FAILED, see deploy\backups\backup.log' -ForegroundColor Red }

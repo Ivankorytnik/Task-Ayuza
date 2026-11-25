@@ -79,6 +79,9 @@ async def no_store(request: Request,call_next):
     response.headers['Cache-Control']='no-store'
     response.headers['X-Content-Type-Options']='nosniff'
     response.headers['Referrer-Policy']='same-origin'
+    # The origin is always https:// (configured_origin) and Funnel serves port 443 only, so browsers
+    # must never fall back to plain HTTP for this host. No includeSubDomains/preload: ts.net is shared.
+    response.headers['Strict-Transport-Security']='max-age=31536000'
     if request.url.path.startswith('/app'):
         response.headers['Content-Security-Policy']=CSP
     return response
