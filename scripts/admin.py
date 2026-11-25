@@ -278,10 +278,11 @@ class Admin:
         else:
             self.out(f'User {key} already exists; password unchanged.')
             return
+        # Ask first: the password-change session lives 10 minutes, and a person may take longer to choose.
+        password = self.ask_new_password(key)
         pre = self.auth.prelogin(ip=OPERATOR_IP)
         s = self.auth.login(login, temporary, OPERATOR_IP, pre['token'], pre['csrf_token'])
         del temporary
-        password = self.ask_new_password(key)
         self.auth.change_password(s['token'], s['csrf_token'], password)   # revokes every session of the user
         if keep_session:   # the next commands act as this account: one sign-in now instead of a prompt
             pre = self.auth.prelogin(ip=OPERATOR_IP)
