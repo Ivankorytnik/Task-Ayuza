@@ -1,9 +1,10 @@
 // DOM layer. Dynamic strings are inserted only as text nodes; nothing is persisted in the browser; no external hosts.
 import { METRIC_LABELS, defaultPeriod, periodError, filtersActive, SCALES, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, MONTHS, ganttRows, metricsCsv, projectBar, dependencyLinks, MAX_DEP_TASKS, monthGrid, shiftMonth, dependencyPayload, CHECK_RESULTS, RISK_CATEGORIES, TRAFFIC, checkPayload, riskPayload, severityLevel, Api, ApiError, EVENTS, PAGE, PRIORITIES, STATUSES, allowedTargets, blockerPayload, columns, createPayload,
-  dateError, diffChanges, label, newClientKey, titleError, unread } from './logic.js';
+  dateError, diffChanges, label, newClientKey, titleError, unread, EMPLOYEE_LIMIT, EMPLOYEE_ROLES, employeeErrorText, employeeLine, employeesCsv, employeesError, isMfaRequired, parseEmployeeRows } from './logic.js';
 
 const root = document.getElementById('app');
-const fresh = () => ({ user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
+const staffFresh = () => ({ text: '', report: null, created: null, pending: null, mfa: false });
+const fresh = () => ({ admin: null, adminTeams: [], staff: staffFresh(), user: null, phase: 'login', login: '', workspaces: [], ws: null, dir: null, tasks: [], status: '',
   more: false, selected: null, comments: [], message: '', error: '', view: 'list', notes: [], unread: 0,
   blockers: [], deps: null, ganttDeps: {}, projDates: {}, risks: [], snap: null, period: { from: '', to: '' }, metrics: null, subs: false, release: '', riskLinks: {}, filters: { mine: false, overdue: false, blocked: false, team: '', project: '' }, scale: 'week', projNames: {}, cal: (() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }; })() });
 const state = fresh();
@@ -382,6 +383,115 @@ function blockersView() {
   return [form, dep];
 }
 
+// ---- employees (WEB-MEMBERS-1): the server checks rights, MFA and every row; this only collects, previews and explains
+
+const administered = () => Boolean(state.admin && state.admin.workspaces.some((w) => w.id === state.ws));
+
+async function loadAdmin() {
+  state.admin = null; state.adminTeams = [];
+  try {
+    state.admin = await api.adminWorkspaces();
+    if (state.admin.system_admin) state.adminTeams = await api.adminTeams();
+  } catch { state.admin = null; }                         // the tab simply stays hidden
+}
+
+async function runStaff(dryRun) {
+  const rows = parseEmployeeRows(state.staff.text);
+  const problem = employeesError(rows);
+  if (problem) { state.message = ''; state.error = problem; return render(); }
+  state.staff.pending = dryRun ? 'preview' : 'create';
+  try {
+    const result = await api.addEmployees(state.ws, rows, dryRun);
+    state.staff.mfa = false; state.staff.report = result; state.message = ''; state.error = '';
+    if (!result.ok) state.error = dryRun ? 'Есть ошибки: исправьте строки.' : 'Ничего не создано: исправьте строки с ошибками.';
+    else if (dryRun) state.message = 'Ошибок нет. Нажмите «Создать», чтобы добавить сотрудников.';
+    else { state.staff.created = result.created; state.staff.report = null; state.staff.text = ''; state.message = `Добавлено сотрудников: ${result.created.length}.`; }
+  } catch (error) {
+    if (isMfaRequired(error)) { state.staff.mfa = true; state.error = ''; state.message = 'Подтвердите действие кодом из приложения-аутентификатора.'; }
+    else { state.message = ''; state.error = error.status === 403 ? 'Добавлять сотрудников может только администратор этого пространства.' : error.message; }
+  }
+  render();
+}
+
+async function verifyMfa(code) {
+  try { await api.mfaVerify(code.trim()); }
+  catch (error) { state.error = error.status === 403 ? 'Код не подошёл или MFA для вашей учётной записи не подключена.' : error.message; return render(); }
+  state.staff.mfa = false; state.error = '';
+  await runStaff(state.staff.pending === 'preview');       // nothing was written before the code was confirmed
+}
+
+function addOne(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  const line = employeeLine({ login: String(data.login).trim(), display_name: String(data.name).trim(), role: data.role, team: data.team || '' });
+  state.staff.text += `${state.staff.text && !state.staff.text.endsWith('\n') ? '\n' : ''}${line}\n`;
+  state.staff.report = null; state.error = ''; state.message = '';
+  render();
+}
+
+function reportTable(report) {
+  return h('table', {}, h('thead', {}, h('tr', {}, ['№', 'Логин', 'Имя', 'Роль', 'Команда', 'Результат'].map((t) => h('th', {}, t)))),
+    h('tbody', {}, report.rows.map((r) => h('tr', { class: r.errors.length ? 'row on' : 'row' },
+      h('td', {}, r.row), h('td', {}, r.login || ''), h('td', {}, r.display_name || ''), h('td', {}, label(EMPLOYEE_ROLES, r.role) || ''),
+      h('td', {}, r.team || ''), h('td', {}, r.errors.length ? employeeErrorText(r.errors) : 'Можно создать')))));
+}
+
+function createdView() {
+  return h('section', { class: 'card' },
+    h('h3', {}, 'Сотрудники добавлены'),
+    h('p', { class: 'muted' }, 'Пароли показаны один раз и нигде не сохраняются: передайте их сотрудникам лично. Пароль действует 24 часа, при первом входе его нужно заменить. Если в файле перед паролем стоит апостроф, он не входит в пароль.'),
+    h('table', {}, h('thead', {}, h('tr', {}, ['Логин', 'Имя', 'Роль', 'Команда', 'Временный пароль'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, state.staff.created.map((e) => h('tr', {}, h('td', {}, e.login), h('td', {}, e.display_name), h('td', {}, label(EMPLOYEE_ROLES, e.role)),
+        h('td', {}, e.team || ''), h('td', {}, h('code', {}, e.password)))))),
+    h('div', { class: 'bar' },
+      h('button', { class: 'primary', on: { click: () => download({ text: employeesCsv(state.staff.created), name: 'employees.csv' }) } }, 'Скачать CSV с паролями'),
+      h('button', { on: { click: () => { state.staff.created = null; state.message = ''; render(); } } }, 'Готово, скрыть пароли')));
+}
+
+function mfaBlock() {
+  const form = h('form', { class: 'card', on: { submit: (e) => { e.preventDefault(); verifyMfa(String(new FormData(form).get('code'))); } } },
+    h('h3', {}, 'Подтверждение MFA'),
+    h('p', { class: 'muted' }, 'Введите 6-значный код из приложения-аутентификатора или резервный код. Подтверждение действует 15 минут.'),
+    h('label', { for: 'mfacode' }, 'Код'),
+    h('input', { id: 'mfacode', name: 'code', autocomplete: 'one-time-code', inputmode: 'numeric', required: true, maxlength: 32 }),
+    h('button', { class: 'primary', type: 'submit' }, 'Подтвердить'));
+  return form;
+}
+
+function staffView() {
+  const mine = state.admin.workspaces;
+  const picker = h('div', { class: 'bar' }, h('label', { for: 'staffws' }, 'Пространство'),
+    h('select', { id: 'staffws', on: { change: async (e) => { state.ws = e.target.value; state.staff = staffFresh(); await loadDirectory(); render(); } } },
+      [...(administered() ? [] : [h('option', { value: '' }, 'Выберите…')]), ...mine.map((w) => h('option', { value: w.id, selected: w.id === state.ws }, w.name))]));
+  if (!administered()) return [picker, h('p', { class: 'muted' }, 'Сотрудников добавляет администратор пространства. Выберите пространство, где вы администратор.')];
+  const system = state.admin.system_admin;
+  const one = h('form', { class: 'card', on: { submit: (e) => { e.preventDefault(); addOne(one); } } },
+    h('h3', {}, 'Добавить одного'),
+    h('div', { class: 'bar' },
+      h('div', {}, h('label', { for: 'slogin' }, 'Логин'), h('input', { id: 'slogin', name: 'login', required: true, maxlength: 64, autocomplete: 'off' })),
+      h('div', {}, h('label', { for: 'sname' }, 'Имя'), h('input', { id: 'sname', name: 'name', required: true, maxlength: 200, autocomplete: 'off' })),
+      h('div', {}, h('label', { for: 'srole' }, 'Роль'), h('select', { id: 'srole', name: 'role' }, options(EMPLOYEE_ROLES, 'participant'))),
+      system ? h('div', {}, h('label', { for: 'steam' }, 'Команда'),
+        h('select', { id: 'steam', name: 'team' }, options(state.adminTeams.map((t) => [t.name, t.name]), '', 'Без команды'))) : ''),
+    h('button', { type: 'submit' }, 'Добавить в список'));
+  const list = h('section', { class: 'card' },
+    h('h3', {}, 'Список сотрудников'),
+    h('p', { class: 'muted' }, `По одному в строке: «логин, имя, роль${system ? ', команда' : ''}». Можно вставить из таблицы или загрузить CSV, не больше ${EMPLOYEE_LIMIT} строк. Роли: участник, наблюдатель, администратор пространства. Если есть хоть одна ошибка, не создаётся никто.`),
+    h('label', { for: 'stafftext' }, 'Строки'),
+    h('textarea', { id: 'stafftext', name: 'text', rows: 8, maxlength: 60000, spellcheck: false, on: { input: (e) => { state.staff.text = e.target.value; state.staff.report = null; } } }, state.staff.text),
+    h('label', { for: 'stafffile' }, 'Или файл CSV'),
+    h('input', { id: 'stafffile', type: 'file', accept: '.csv,.txt,text/csv,text/plain', on: { change: async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      if (file.size > 60000) { state.error = 'Файл слишком большой.'; return render(); }
+      state.staff.text = await file.text(); state.staff.report = null; state.error = ''; render();
+    } } }),
+    h('div', { class: 'bar' },
+      h('button', { on: { click: () => runStaff(true) } }, 'Проверить'),
+      h('button', { class: 'primary', on: { click: () => runStaff(false) } }, 'Создать'),
+      h('button', { on: { click: () => { state.staff = staffFresh(); state.error = ''; state.message = ''; render(); } } }, 'Очистить')));
+  return [picker, state.staff.created ? createdView() : '', state.staff.mfa ? mfaBlock() : '', one, list, state.staff.report ? reportTable(state.staff.report) : ''];
+}
+
 function mainView() {
   const bar = h('div', { class: 'bar' },
     h('label', { for: 'ws' }, 'Пространство'),
@@ -397,15 +507,16 @@ function mainView() {
     pick('team', 'Команда', state.dir ? state.dir.teams.map((t) => [t.id, t.name]) : []),
     pick('project', 'Проект', Object.entries(state.projNames)),
     filtersActive(state.filters) ? h('button', { on: { click: async () => { state.filters = { mine: false, overdue: false, blocked: false, team: '', project: '' }; await loadTasks(true); } } }, 'Сбросить') : '');
-  const tabs = h('div', { class: 'bar' }, [['list', 'Список'], ['board', 'Kanban'], ['gantt', 'Гант'], ['calendar', 'Календарь'], ['risks', 'Риски'], ['notes', `Уведомления${state.unread ? ` (${state.unread})` : ''}`]]
+  const tabs = h('div', { class: 'bar' }, [['list', 'Список'], ['board', 'Kanban'], ['gantt', 'Гант'], ['calendar', 'Календарь'], ['risks', 'Риски'], ...(administered() ? [['staff', 'Сотрудники']] : []), ['notes', `Уведомления${state.unread ? ` (${state.unread})` : ''}`]]
     .map(([key, text]) => h('button', { class: state.view === key ? 'primary' : '', on: { click: async () => {
       state.view = key; state.error = ''; state.message = '';
-      if (key === 'notes') await loadNotes(); else if (key === 'risks') await loadRisks(); else await loadTasks(true);
+      if (key === 'notes') await loadNotes(); else if (key === 'risks') await loadRisks(); else if (key === 'staff') render(); else await loadTasks(true);
     } } }, text)));
   const table = h('table', {}, h('thead', {}, h('tr', {}, ['Название', 'Статус', 'Приоритет', 'Срок'].map((t) => h('th', {}, t)))),
     h('tbody', {}, state.tasks.map(taskRow)));
   const messages = [h('div', { class: 'error', role: 'alert' }, state.error), h('div', { class: 'ok' }, state.message)];
   if (state.view === 'notes') return [tabs, messages, notesView()];
+  if (state.view === 'staff' && state.admin) return [tabs, messages, staffView()];
   if (state.view === 'risks') return [tabs, messages, risksView(), h('p', { class: 'muted' }, state.release)];
   return [bar, filters, tabs, messages, snapshotView(), metricsView(), state.dir ? createView() : '', h('div', { class: 'bar' }, h('button', { on: { click: () => exportTasks('csv') } }, 'Выгрузить CSV'),
       h('button', { on: { click: () => exportTasks('json') } }, 'Выгрузить JSON')),
@@ -481,6 +592,7 @@ async function enter() {
   state.ws = state.workspaces.length ? state.workspaces[0].id : null;
   state.message = state.workspaces.length ? '' : 'У вас пока нет доступных пространств.';
   await loadDirectory();
+  await loadAdmin();
   try { state.release = (await api.release()).label; } catch { state.release = ''; }
   if (state.ws) await loadTasks(true); else render();
 }

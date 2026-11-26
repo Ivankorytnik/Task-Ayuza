@@ -2,6 +2,7 @@
 // Needs google-chrome. Synthetic data only. Exits 1 on a CSP violation, a page exception or a missing element.
 import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 const [base, userFile] = process.argv.slice(2);
@@ -44,6 +45,13 @@ const signIn = async (login, password) => {
 };
 const signOut = async () => { await click('Выйти'); return until("!!document.querySelector('#login')"); };
 const loggedIn = () => until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Выйти')");
+// TOTP (RFC 6238, SHA-1, 30 s, 6 digits) for the seeded administrator; `offset` steps ahead of the seed's own confirmation step.
+const base32 = (text) => { const abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = ''; for (const ch of text.replace(/=+$/, '')) bits += abc.indexOf(ch).toString(2).padStart(5, '0');
+  const bytes = []; for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2)); return Buffer.from(bytes); };
+const totp = (secret, offset = 0) => { const counter = Buffer.alloc(8); counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000) + offset));
+  const mac = createHmac('sha1', base32(secret)).update(counter).digest(); const at = mac[19] & 15;
+  return String((((mac[at] & 0x7f) << 24) | (mac[at + 1] << 16) | (mac[at + 2] << 8) | mac[at + 3]) % 1000000).padStart(6, '0'); };
+const typeInto = (selector, value) => ev(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
 const setSelect = (selector, value) => ev(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
 
 await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable'); await send('Network.enable');
@@ -191,6 +199,44 @@ check('csv holds the exporter task', String(csvText).includes('Задача эк
 await click('Выгрузить JSON');
 check('json export succeeds', await until("window.__blobs.length === 2"));
 check('json is valid and holds the task', await ev("window.__blobs[1].text().then((t) => { try { return JSON.stringify(JSON.parse(t)).includes('Задача экспорта'); } catch { return false; } }, () => false)"));
+await signOut();
+
+// WEB-MEMBERS-1: a workspace administrator adds two employees; the real TOTP code is typed in the browser
+const suffix = Math.random().toString(16).slice(2, 10);
+const staff1 = `e2e.a${suffix}`; const staff2 = `e2e.b${suffix}`;
+await signIn(user.staff.login, user.staff.password);
+check('workspace administrator signed in', await loggedIn(), (await text()).slice(0, 300));
+check('staff tab is offered to the administrator', await until("[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Сотрудники')"), (await text()).slice(0, 300));
+await click('Сотрудники');
+check('staff view shows the single form and the list', await until("document.body.innerText.includes('Добавить одного') && !!document.querySelector('#stafftext')"), (await text()).slice(0, 300));
+await ev("(() => { window.__blobs = []; if (!window.__origBlobUrl) window.__origBlobUrl = URL.createObjectURL.bind(URL); URL.createObjectURL = (b) => { window.__blobs.push(b); return window.__origBlobUrl(b); }; return true; })()");
+await typeInto('#stafftext', `login,имя,роль\n${staff1}, Сотрудник Один, участник\n${staff2};Сотрудник Два;наблюдатель\n`);
+await click('Проверить');
+check('MFA confirmation is requested before anything is written', await until("document.body.innerText.includes('Подтверждение MFA') && !!document.querySelector('#mfacode')"), (await text()).slice(0, 400));
+await fill('#mfacode', totp(user.staff.secret, 1));
+await ev("document.querySelector('#mfacode').form.querySelector('button[type=submit]').click()");
+check('after the code the preview lists both rows as ready',
+  await until(`document.body.innerText.includes('Можно создать') && document.body.innerText.includes(${JSON.stringify(staff2)})`), (await text()).slice(0, 500));
+check('the preview created nobody', await ev("!document.body.innerText.includes('Сотрудники добавлены')"));
+await click('Создать');
+check('employees created and temporary passwords shown', await until("document.body.innerText.includes('Сотрудники добавлены') && document.querySelectorAll('code').length === 2"), (await text()).slice(0, 500));
+const passwords = await ev("[...document.querySelectorAll('code')].map((e) => e.textContent)");
+check('both passwords look like temporary passwords', Array.isArray(passwords) && passwords.length === 2 && passwords.every((p) => p.length >= 20));
+await click('Скачать CSV с паролями');
+check('password CSV is generated', await until('window.__blobs.length === 1'));
+check('password CSV holds both logins, both passwords and the header',
+  await ev(`window.__blobs[0].text().then((t) => [${JSON.stringify(staff1)}, ${JSON.stringify(staff2)}, ${JSON.stringify(passwords[0])}, ${JSON.stringify(passwords[1])}, 'временный пароль'].every((x) => t.includes(x)))`));
+await click('Готово, скрыть пароли');
+check('passwords are gone from the page after Done', await ev(`!document.body.innerText.includes(${JSON.stringify(passwords[0])})`));
+check('staff: nothing is stored on the device', await ev('localStorage.length === 0 && sessionStorage.length === 0'));
+await signOut();
+// the new employee signs in with the temporary password and must replace it
+await signIn(staff1, passwords[0]);
+check('new employee is sent to the password change', await until("document.body.innerText.includes('Новый пароль') && !!document.querySelector('#next')"), (await text()).slice(0, 300));
+await fill('#next', user.temp.new_password); await fill('#again', user.temp.new_password);
+await click('Сохранить и войти');
+check('new employee signed in after the change', await loggedIn(), (await text()).slice(0, 300));
+check('a participant is not offered the staff tab', await ev("![...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Сотрудники')"));
 await signOut();
 
 // API reference page: rendered from the service's own openapi.json under the same CSP

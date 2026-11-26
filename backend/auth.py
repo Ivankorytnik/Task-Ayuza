@@ -73,6 +73,29 @@ def event(c, action, *, user_id=None, session_id=None, request_id):
         entity=user_id or session_id or uuid.uuid4(), action='auth.' + action, request=request_id)
 
 
+def prepare_user(login, display_name):
+    """Validate a new account and hash its temporary password. Argon2id runs here,
+    before any transaction, so no row locks are held during hashing. Raises ValueError."""
+    normalized = normalize_login(login)
+    if not isinstance(display_name, str) or not display_name.strip() or len(display_name) > 200:
+        raise ValueError('Invalid display name')
+    password = temporary_password()
+    with argon2_slot():
+        encoded = hash_password(password)
+    return {'login': normalized, 'display_name': display_name, 'password': password, 'hash': encoded}
+
+
+def insert_user(c, organization_id, uid, prepared):
+    """Insert a prepared account: temporary password for 24 hours and a forced change at
+    first login (must_change_password defaults to true). The caller writes the audit event."""
+    execute(c, '''INSERT INTO task_ayuza.users
+        (id,organization_id,login,login_normalized,display_name,password_hash,temporary_expires_at)
+        VALUES (:id,:org,:login,:login,:display,:hash,clock_timestamp()+interval '24 hours')''',
+        id=uid, org=organization_id, login=prepared['login'], display=prepared['display_name'],
+        hash=prepared['hash'])
+    return uid
+
+
 @contextmanager
 def argon2_slot():
     """Bounded wait for an Argon2id slot for operations without a limiter charge."""
@@ -390,19 +413,13 @@ class AuthService:
             raise AuthError()
 
     def create_user(self, organization_id, login, display_name, request_id=None):
-        """Closed service function. Caller authorization belongs to M01.4, no HTTP route."""
-        normalized = normalize_login(login)
-        if not display_name.strip() or len(display_name)>200:
-            raise ValueError('Invalid display name')
-        password = temporary_password()
-        with argon2_slot():
-            encoded = hash_password(password)
+        """Operator provisioning (scripts/admin.py), audited as system. The web path is
+        AclService.add_employees, which shares prepare_user/insert_user."""
+        prepared = prepare_user(login, display_name)
+        password = prepared['password']
         uid = uuid.uuid4()
         def run(c):
-            execute(c, '''INSERT INTO task_ayuza.users
-                (id,organization_id,login,login_normalized,display_name,password_hash,temporary_expires_at)
-                VALUES (:id,:org,:login,:login,:display,:hash,clock_timestamp()+interval '24 hours')''',
-                id=uid,org=organization_id,login=normalized,display=display_name,hash=encoded)
+            insert_user(c, organization_id, uid, prepared)
             event(c,'user_created',user_id=uid,request_id=request_id or uuid.uuid4())
         self.transaction(run)
         return uid, password

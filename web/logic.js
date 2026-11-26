@@ -12,8 +12,11 @@ export const EVENTS = { task_assigned: 'Вам назначена задача',
 export const label = (pairs, key) => (pairs.find((p) => p[0] === key) || [key, key])[1];
 
 export class ApiError extends Error {
-  constructor(status) { super(messageFor(status)); this.status = status; }
+  constructor(status, detail = '') { super(messageFor(status)); this.status = status; this.detail = detail; }
 }
+
+// 403 means "no rights" and also "confirm MFA first"; only the server's constant detail tells them apart.
+export const isMfaRequired = (error) => error instanceof ApiError && error.status === 403 && error.detail === 'MFA required';
 
 export function messageFor(status) {
   return ({
@@ -291,6 +294,76 @@ export function periodError(from, to) {
   return '';
 }
 
+// ---- WEB-MEMBERS-1: adding employees (the server decides everything; this only parses and explains)
+
+export const EMPLOYEE_LIMIT = 200;
+export const EMPLOYEE_ROLES = [['participant', 'Участник'], ['observer', 'Наблюдатель'], ['workspace_admin', 'Администратор пространства']];
+const ROLE_ALIASES = { участник: 'participant', наблюдатель: 'observer', администратор: 'workspace_admin',
+  'администратор пространства': 'workspace_admin', participant: 'participant', observer: 'observer', workspace_admin: 'workspace_admin', admin: 'workspace_admin' };
+export const EMPLOYEE_ERRORS = {
+  invalid_row: 'строка не распознана', invalid_login: 'логин: 3-64 символа, латиница, цифры, точка, дефис или подчёркивание',
+  invalid_name: 'имя: от 1 до 200 символов', invalid_role: 'роль: участник, наблюдатель или администратор пространства',
+  invalid_team: 'название команды некорректно', duplicate_login: 'логин повторяется в списке', login_taken: 'логин уже занят',
+  self: 'нельзя добавить себя', team_requires_system_admin: 'команду указывает только системный администратор',
+  team_unknown: 'команда не найдена', team_ambiguous: 'команд с таким названием несколько',
+};
+
+export const employeeErrorText = (codes) => (codes || []).map((code) => EMPLOYEE_ERRORS[code] || code).join('; ');
+
+// Quote-aware split of one line. Separator priority: tab (pasted from a spreadsheet), then ';' (Russian Excel), then ','.
+function splitCells(line) {
+  const outside = line.replace(/"[^"]*"/g, '');
+  const sep = outside.includes('\t') ? '\t' : outside.includes(';') ? ';' : ',';
+  const cells = []; let cell = ''; let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') { cell += '"'; i += 1; } else if (ch === '"') quoted = false; else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === sep) { cells.push(cell.trim()); cell = ''; } else cell += ch;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+// Text or CSV: "login, name, role[, team]" per line. An optional header, blank lines and a BOM are skipped.
+// A role written in words becomes its code; anything else is passed on so that the server names the error.
+export function parseEmployeeRows(text) {
+  const rows = [];
+  const lines = String(text || '').replace(/^﻿/, '').split(/\r\n|\r|\n/).filter((line) => line.trim());
+  lines.forEach((line, index) => {
+    const [login = '', name = '', role = '', team = ''] = splitCells(line);
+    if (index === 0 && ['логин', 'login'].includes(login.toLowerCase()) && !ROLE_ALIASES[role.toLowerCase()]) return;
+    const row = { login, display_name: name, role: ROLE_ALIASES[role.toLowerCase()] || role };
+    if (team) row.team = team;
+    rows.push(row);
+  });
+  return rows;
+}
+
+const csvText = (value) => String(value == null ? '' : value);
+// A cell that a spreadsheet could read as a formula gets a leading apostrophe (it is not part of the value).
+const csvCell = (value) => { let s = csvText(value); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
+
+// One line for the text box, built from the single-employee form.
+export function employeeLine(row) {
+  const cell = (v) => (/[",;\t\r\n]/.test(csvText(v)) ? `"${csvText(v).replace(/"/g, '""')}"` : csvText(v));
+  return [row.login, row.display_name, row.role, ...(row.team ? [row.team] : [])].map(cell).join(', ');
+}
+
+// The one-time hand-out of temporary passwords: UTF-8 with BOM, every cell quoted.
+export function employeesCsv(created) {
+  const lines = [['логин', 'имя', 'роль', 'команда', 'временный пароль'],
+    ...created.map((e) => [e.login, e.display_name, label(EMPLOYEE_ROLES, e.role), e.team || '', e.password])];
+  return '﻿' + lines.map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
+}
+
+export function employeesError(rows) {
+  if (!rows.length) return 'Список пуст: введите хотя бы одного сотрудника.';
+  if (rows.length > EMPLOYEE_LIMIT) return `Не больше ${EMPLOYEE_LIMIT} сотрудников за раз.`;
+  return '';
+}
+
 export class Api {
   constructor(fetchImpl, onAuthLost = () => {}) {
     this.fetch = fetchImpl;
@@ -370,4 +443,22 @@ export class Api {
   metrics(ws, from, to) { return this.request('GET', `/api/v1/workspaces/${ws}/metrics?${new URLSearchParams({ from, to })}`); }
   snapshot(ws, includeSubtasks) { return this.request('GET', `/api/v1/workspaces/${ws}/snapshot?include_subtasks=${includeSubtasks ? 'true' : 'false'}`); }
   addComment(id, body) { return this.request('POST', `/api/v1/tasks/${id}/comments`, { body }, true); }
+  mfaVerify(code) { return this.request('POST', '/api/v1/auth/mfa/verify', { code }, true); }
+  adminWorkspaces() { return this.request('GET', '/api/v1/admin/workspaces'); }
+  adminTeams() { return this.request('GET', '/api/v1/admin/teams'); }
+  // 200 is a preview or a success, 422 with a per-row report means that nothing was created. Both return the report.
+  async addEmployees(ws, rows, dryRun) {
+    const headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
+    if (this.csrf) headers['X-CSRF-Token'] = this.csrf;
+    let res;
+    try {
+      res = await this.fetch(`/api/v1/admin/workspaces/${ws}/employees`, { method: 'POST', headers, credentials: 'same-origin',
+        cache: 'no-store', body: JSON.stringify({ rows, dry_run: dryRun }) });
+    } catch { throw new ApiError(0); }            // offline or unreachable
+    let body = null;
+    try { body = await res.json(); } catch { body = null; }
+    if (res.ok || (res.status === 422 && body && Array.isArray(body.rows))) return body;
+    if (res.status === 401) this.onAuthLost();
+    throw new ApiError(res.status, body && typeof body.detail === 'string' ? body.detail : '');
+  }
 }

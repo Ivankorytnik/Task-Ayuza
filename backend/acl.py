@@ -20,8 +20,9 @@ import uuid
 
 from sqlalchemy.exc import IntegrityError
 
-from backend.auth import AuthService, execute, one
+from backend.auth import AuthService, execute, insert_user, one, prepare_user
 from backend.mfa import mfa_fresh
+from backend.passwords import normalize_login
 
 CAPABILITIES = frozenset({'read', 'comment', 'content_edit', 'link', 'assign',
                           'archive_restore', 'manage_access', 'export'})
@@ -29,6 +30,8 @@ GRANT_CAPABILITIES = CAPABILITIES | {'audit_read'}
 # Capabilities a workspace administrator may hand to a team member in M01.3.
 DELEGABLE = frozenset({'read', 'comment', 'content_edit', 'link'})
 WORKSPACE_ROLES = frozenset({'participant', 'observer', 'workspace_admin'})
+EMPLOYEE_LIMIT = 200
+EMPLOYEE_FIELDS = frozenset({'login', 'display_name', 'role', 'team'})
 SNAPSHOT_FIELDS = frozenset({'name', 'role', 'active', 'capability', 'timezone', 'revoked',
                              'kind', 'expires_at', 'role_code',
                              # M02.1 work objects: identifiers and enums only, never titles or text
@@ -233,6 +236,110 @@ def _upsert(c, u, s, *, table, keys, values, entity_kind, actions, workspace_id,
     return {'id': updated['id'], 'version': updated['version'], 'created': False}
 
 
+def _team_member(c, u, s, team, target, active, expected, request_id):
+    """Team membership change by a system administrator (inside mfa_mutation)."""
+    require_system_admin(c, u['id'])
+    _reject_self(u, target)  # a system administrator cannot join a team to reach data
+    if one(c, 'SELECT 1 AS x FROM task_ayuza.teams WHERE id=:id AND organization_id=:org',
+           id=team, org=u['organization_id']) is None:
+        raise _not_found()
+    _target_user(c, u, target, require_active=active)
+    return _upsert(c, u, s, table='team_members', keys={'team_id': team, 'user_id': target},
+                   values={'active': active}, entity_kind='team_member',
+                   actions=('acl.team_member_added', 'acl.team_member_changed'),
+                   workspace_id=None, expected=expected, request_id=request_id)
+
+
+def _workspace_member(c, u, s, wid, target, role, active, expected, request_id):
+    """Workspace membership change by that workspace's administrator (inside mfa_mutation)."""
+    require_workspace_admin(c, u['id'], wid)
+    _reject_self(u, target)
+    _target_user(c, u, target, require_active=active)
+    return _upsert(c, u, s, table='workspace_members', keys={'workspace_id': wid, 'user_id': target},
+                   values={'role': role, 'active': active}, entity_kind='workspace_member',
+                   actions=('acl.workspace_member_added', 'acl.workspace_member_changed'),
+                   workspace_id=wid, expected=expected, request_id=request_id)
+
+
+def _parse_employee(row, seen):
+    """Syntax-only check of one employee row: no database, no hashing. Returns (clean, codes)."""
+    codes = []
+    if not isinstance(row, dict) or set(row) - EMPLOYEE_FIELDS:
+        return {'login': None, 'display_name': None, 'role': None, 'team': None}, ['invalid_row']
+    login, name, role, team = row.get('login'), row.get('display_name'), row.get('role'), row.get('team')
+    try:
+        login = normalize_login(login)
+    except (ValueError, AttributeError):
+        codes.append('invalid_login')
+        login = None
+    if not isinstance(name, str) or not name.strip() or len(name) > 200:
+        codes.append('invalid_name')
+        name = None
+    if role not in WORKSPACE_ROLES:
+        codes.append('invalid_role')
+        role = None
+    if team is not None and team != '' and (not isinstance(team, str) or not team.strip() or len(team) > 200):
+        codes.append('invalid_team')
+        team = None
+    team = team or None
+    if login is not None:
+        if login in seen:
+            codes.append('duplicate_login')
+        seen.add(login)
+    return {'login': login, 'display_name': name.strip() if name else None, 'role': role, 'team': team}, codes
+
+
+def _add_employees(c, u, s, wid, clean, codes, prepared, dry_run, request_id):
+    """Check every row, then write all of them or nothing (inside mfa_mutation).
+
+    The administrator must administer this workspace; a team can be named only by a system
+    administrator; nobody adds themselves. Passwords were hashed before the transaction.
+    """
+    require_workspace_admin(c, u['id'], wid)
+    system_admin = has_system_role(c, u['id'], 'system_admin')
+    logins = [row['login'] for row in clean if row['login']]
+    taken = set(execute(c, '''SELECT login_normalized FROM task_ayuza.users
+        WHERE organization_id=:org AND login_normalized = ANY(CAST(:logins AS text[]))''',
+                        org=u['organization_id'], logins=logins).scalars().all()) if logins else set()
+    names = sorted({row['team'] for row in clean if row['team']})
+    teams = {}
+    if names:
+        for found in execute(c, '''SELECT id, name FROM task_ayuza.teams
+            WHERE organization_id=:org AND active AND name = ANY(CAST(:names AS text[])) ORDER BY id''',
+                             org=u['organization_id'], names=names).mappings():
+            teams.setdefault(found['name'], []).append(found['id'])
+    report = []
+    for index, row in enumerate(clean):
+        errors = list(codes[index])
+        if row['login'] is not None and row['login'] == u['login_normalized']:
+            errors.append('self')
+        elif row['login'] is not None and row['login'] in taken:
+            errors.append('login_taken')
+        if row['team'] and 'invalid_team' not in errors:
+            if not system_admin:
+                errors.append('team_requires_system_admin')
+            elif row['team'] not in teams:
+                errors.append('team_unknown')
+            elif len(teams[row['team']]) > 1:
+                errors.append('team_ambiguous')
+        report.append({'row': index + 1, **row, 'errors': errors})
+    ok = not any(item['errors'] for item in report)
+    if not ok or dry_run:
+        return {'ok': ok, 'dry_run': dry_run, 'rows': report, 'created': []}
+    created = []
+    for index, row in enumerate(clean):
+        uid = uuid.uuid4()
+        insert_user(c, u['organization_id'], uid, prepared[index])
+        audit(c, u, s, request_id=request_id, entity_kind='user', entity_id=uid, action='acl.user_created',
+              workspace_id=wid, old=None, new={'role': row['role']})
+        _workspace_member(c, u, s, wid, uid, row['role'], True, None, request_id)
+        if row['team']:
+            _team_member(c, u, s, teams[row['team']][0], uid, True, None, request_id)
+        created.append({'row': index + 1, 'id': uid, 'login': row['login'], 'display_name': row['display_name'],
+                        'role': row['role'], 'team': row['team'], 'password': prepared[index]['password']})
+    return {'ok': True, 'dry_run': False, 'rows': report, 'created': created}
+
+
 def mfa_mutation(auth: AuthService, token, csrf, run):
     """Administrative mutation: valid session, CSRF and a fresh MFA verification (D03)."""
     def guarded(c, u, s):
@@ -301,6 +408,26 @@ class AclService:
             return [dict(r) for r in rows.mappings()]
         return self.auth.protected(token, run)
 
+    def admin_workspaces(self, token):
+        """Workspaces this caller administers, plus whether the caller is a system administrator."""
+        def run(c, u, s):
+            rows = execute(c, '''SELECT w.id, w.name, w.timezone FROM task_ayuza.workspaces w
+                JOIN task_ayuza.workspace_members m ON m.workspace_id = w.id AND m.user_id = :u AND m.active
+                    AND m.role = 'workspace_admin'
+                ORDER BY w.name, w.id''', u=u['id'])
+            return {'workspaces': [dict(r) for r in rows.mappings()],
+                    'system_admin': has_system_role(c, u['id'], 'system_admin')}
+        return self.auth.protected(token, run)
+
+    def admin_teams(self, token):
+        """Active teams of the organization, for system administrators only (names are not content)."""
+        def run(c, u, s):
+            require_system_admin(c, u['id'])
+            rows = execute(c, '''SELECT id, name FROM task_ayuza.teams
+                WHERE organization_id=:org AND active ORDER BY name, id''', org=u['organization_id'])
+            return [dict(r) for r in rows.mappings()]
+        return self.auth.protected(token, run)
+
     def count_workspaces(self, token):
         def run(c, u, s):
             return execute(c, '''SELECT count(*) FROM task_ayuza.workspaces w
@@ -351,16 +478,7 @@ class AclService:
         request_id = as_uuid(request_id) if request_id else uuid.uuid4()
 
         def run(c, u, s):
-            require_system_admin(c, u['id'])
-            _reject_self(u, target)  # a system administrator cannot join a team to reach data
-            if one(c, 'SELECT 1 AS x FROM task_ayuza.teams WHERE id=:id AND organization_id=:org',
-                   id=team, org=u['organization_id']) is None:
-                raise _not_found()
-            _target_user(c, u, target, require_active=active)
-            return _upsert(c, u, s, table='team_members', keys={'team_id': team, 'user_id': target},
-                           values={'active': active}, entity_kind='team_member',
-                           actions=('acl.team_member_added', 'acl.team_member_changed'),
-                           workspace_id=None, expected=expected, request_id=request_id)
+            return _team_member(c, u, s, team, target, active, expected, request_id)
         return self._mutation(token, csrf, run)
 
     # ---- workspace administrator: members, allowed teams, delegated access ----
@@ -374,14 +492,41 @@ class AclService:
         request_id = as_uuid(request_id) if request_id else uuid.uuid4()
 
         def run(c, u, s):
-            require_workspace_admin(c, u['id'], wid)
-            _reject_self(u, target)
-            _target_user(c, u, target, require_active=active)
-            return _upsert(c, u, s, table='workspace_members', keys={'workspace_id': wid, 'user_id': target},
-                           values={'role': role, 'active': active}, entity_kind='workspace_member',
-                           actions=('acl.workspace_member_added', 'acl.workspace_member_changed'),
-                           workspace_id=wid, expected=expected, request_id=request_id)
+            return _workspace_member(c, u, s, wid, target, role, active, expected, request_id)
         return self._mutation(token, csrf, run)
+
+    def add_employees(self, token, csrf, workspace_id, rows, dry_run=False, request_id=None):
+        """Add new accounts to one workspace, all or nothing (WEB-MEMBERS-1).
+
+        Each employee gets a temporary password for 24 hours and must change it at first login.
+        With dry_run nothing is hashed or written and the per-row report is returned. A report
+        with errors means that nothing was created. Passwords are returned only here, once.
+        Everything is checked before the first Argon2id hash; the write transaction checks again.
+        """
+        wid = as_uuid(workspace_id)
+        if not isinstance(dry_run, bool) or not isinstance(rows, list) or not 1 <= len(rows) <= EMPLOYEE_LIMIT:
+            raise AclError(422, 'Invalid value')
+        request_id = as_uuid(request_id) if request_id else uuid.uuid4()
+        seen, clean, codes = set(), [], []
+        for row in rows:
+            item, found = _parse_employee(row, seen)
+            clean.append(item)
+            codes.append(found)
+
+        def check(c, u, s):
+            return _add_employees(c, u, s, wid, clean, codes, [], True, request_id)
+        # First transaction: session, CSRF, fresh MFA, administrator role and every row, without hashing.
+        # Argon2id (64 MiB per password) must never run for a caller who is not allowed to be here.
+        report = self._mutation(token, csrf, check)
+        report['dry_run'] = dry_run
+        if dry_run or not report['ok']:
+            return report
+        # Hashing happens outside any transaction, so no row lock is held meanwhile.
+        prepared = [prepare_user(row['login'], row['display_name']) for row in clean]
+
+        def run(c, u, s):
+            return _add_employees(c, u, s, wid, clean, codes, prepared, False, request_id)
+        return self._mutation(token, csrf, run)  # checks again: a login may have been taken meanwhile
 
     def set_workspace_team(self, token, csrf, workspace_id, team_id, active=True,
                            expected_version=None, request_id=None):

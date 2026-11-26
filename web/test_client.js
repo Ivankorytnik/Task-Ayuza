@@ -1,7 +1,7 @@
 // Node tests for web/logic.js (no browser, no network). Run: node web/test_client.js
 import assert from 'node:assert/strict';
 import { metricsCsv, projectBar, dependencyLinks, METRIC_LABELS, defaultPeriod, periodError, filtersActive, taskQuery, groupRows, isOverdue, rangeError, scaleTicks, todayLeft, trackWidth, snapshotItems, EVENTS, ganttRows, monthGrid, shiftMonth, dependencyPayload, checkPayload, riskPayload, severityLevel, Api, ApiError, PAGE, allowedTargets, blockerPayload, columns, transitionAllowed, unread, createPayload, dateError, diffChanges, label, messageFor, newClientKey, titleError,
-  STATUSES } from './logic.js';
+  STATUSES, EMPLOYEE_LIMIT, employeeErrorText, employeeLine, employeesCsv, employeesError, isMfaRequired, parseEmployeeRows } from './logic.js';
 
 let passed = 0;
 const test = async (name, fn) => { await fn(); passed += 1; console.log('ok', name); };
@@ -352,6 +352,87 @@ await test('metrics period: default, validation, request', async () => {
   assert.deepEqual(METRIC_LABELS.map((x) => x[0]), ['created', 'completed', 'cancelled', 'reopened']);
   const f = fakeFetch([]); await new Api(f).metrics('w1', '2026-10-23', '2026-11-21');
   assert.equal(f.calls[0].path, '/api/v1/workspaces/w1/metrics?from=2026-10-23&to=2026-11-21');
+});
+
+await test('employee rows: separators, quotes, header, blank lines, BOM and role words', () => {
+  const text = '﻿логин;имя;роль;команда\r\n\r\nivanov;Иван Иванов;Участник\r\n'
+    + 'petrov, "Петров, Пётр", наблюдатель\n'
+    + 'sidorov\tСидоров Сидор\tАдминистратор пространства\tПродажи\n'
+    + '"quote";"Say ""hi""";workspace_admin;"Команда ""А"""\n   \n';
+  assert.deepEqual(parseEmployeeRows(text), [
+    { login: 'ivanov', display_name: 'Иван Иванов', role: 'participant' },
+    { login: 'petrov', display_name: 'Петров, Пётр', role: 'observer' },
+    { login: 'sidorov', display_name: 'Сидоров Сидор', role: 'workspace_admin', team: 'Продажи' },
+    { login: 'quote', display_name: 'Say "hi"', role: 'workspace_admin', team: 'Команда "А"' },
+  ]);
+  assert.deepEqual(parseEmployeeRows('login,name,role\na1,Name,admin'), [{ login: 'a1', display_name: 'Name', role: 'workspace_admin' }]);
+  assert.deepEqual(parseEmployeeRows(''), []); assert.deepEqual(parseEmployeeRows(null), []); assert.deepEqual(parseEmployeeRows(' \n\r\n '), []);
+  // a first line that is data, not a header, stays: the role column decides
+  assert.deepEqual(parseEmployeeRows('login,Имя,participant'), [{ login: 'login', display_name: 'Имя', role: 'participant' }]);
+  // unknown role and missing cells are passed on for the server to name
+  assert.deepEqual(parseEmployeeRows('x1,Имя,boss\nonly'), [{ login: 'x1', display_name: 'Имя', role: 'boss' }, { login: 'only', display_name: '', role: '' }]);
+});
+
+await test('employee line for the text box round-trips through the parser', () => {
+  const row = { login: 'ivanov', display_name: 'Петров, "Пётр"', role: 'observer', team: 'Продажи; Москва' };
+  assert.deepEqual(parseEmployeeRows(employeeLine(row)), [row]);
+  assert.equal(employeeLine({ login: 'a1', display_name: 'Имя', role: 'participant' }), 'a1, Имя, participant');
+});
+
+await test('password hand-out CSV: BOM, quoted cells, no spreadsheet formulas', () => {
+  const csv = employeesCsv([{ login: 'a1', display_name: '=HYPERLINK("x")', role: 'workspace_admin', team: '', password: '-abcDEF_123' },
+    { login: 'b2', display_name: 'Имя', role: 'observer', team: 'Команда', password: 'q"w' }]);
+  const lines = csv.split('\r\n');
+  assert.equal(csv.charCodeAt(0), 0xfeff);
+  assert.equal(lines[0], '﻿"логин","имя","роль","команда","временный пароль"');
+  assert.equal(lines[1], '"a1","\'=HYPERLINK(""x"")","Администратор пространства","","\'-abcDEF_123"');
+  assert.equal(lines[2], '"b2","Имя","Наблюдатель","Команда","q""w"');
+  assert.equal(lines[3], ''); assert.equal(lines.length, 4);
+});
+
+await test('employee errors and limits are explained in words', () => {
+  assert.equal(employeeErrorText(['login_taken']), 'логин уже занят');
+  assert.equal(employeeErrorText(['invalid_role', 'duplicate_login']), 'роль: участник, наблюдатель или администратор пространства; логин повторяется в списке');
+  assert.equal(employeeErrorText(['brand_new_code']), 'brand_new_code'); assert.equal(employeeErrorText([]), ''); assert.equal(employeeErrorText(undefined), '');
+  assert.ok(employeesError([])); assert.equal(employeesError([{}]), '');
+  assert.equal(employeesError(new Array(EMPLOYEE_LIMIT).fill({})), ''); assert.ok(employeesError(new Array(EMPLOYEE_LIMIT + 1).fill({})));
+  assert.equal(EMPLOYEE_LIMIT, 200);
+});
+
+await test('employees API: request shape, reports, MFA detection, session loss', async () => {
+  const report = { ok: true, dry_run: true, rows: [], created: [] };
+  const f = fakeFetch([{ status: 200, body: report }]); const api = new Api(f); api.csrf = 'tok';
+  assert.deepEqual(await api.addEmployees('w1', [{ login: 'a1' }], true), report);
+  assert.equal(f.calls[0].path, '/api/v1/admin/workspaces/w1/employees');
+  assert.equal(f.calls[0].init.method, 'POST'); assert.equal(f.calls[0].init.credentials, 'same-origin'); assert.equal(f.calls[0].init.cache, 'no-store');
+  assert.equal(f.calls[0].init.headers['X-CSRF-Token'], 'tok');
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { rows: [{ login: 'a1' }], dry_run: true });
+  // 422 with a per-row report is a result (nothing was created); a plain 422 is an error
+  const refused = { ok: false, rows: [{ row: 1, errors: ['login_taken'] }], created: [] };
+  assert.deepEqual(await new Api(fakeFetch([{ status: 422, body: refused }])).addEmployees('w1', [{}], false), refused);
+  await assert.rejects(new Api(fakeFetch([{ status: 422, body: { detail: 'Invalid request' } }])).addEmployees('w1', [{}], false), (e) => e.status === 422 && !isMfaRequired(e));
+  // 403 for missing MFA differs from 403 for missing rights only by the server's constant detail
+  const mfaError = await new Api(fakeFetch([{ status: 403, body: { detail: 'MFA required' } }])).addEmployees('w1', [{}], false).catch((e) => e);
+  assert.ok(mfaError instanceof ApiError && isMfaRequired(mfaError)); assert.ok(!mfaError.message.includes('MFA'));
+  const rights = await new Api(fakeFetch([{ status: 403, body: { detail: 'Operation not permitted' } }])).addEmployees('w1', [{}], false).catch((e) => e);
+  assert.ok(!isMfaRequired(rights)); assert.equal(rights.status, 403);
+  assert.ok(!isMfaRequired(new Error('MFA required')) && !isMfaRequired(null));
+  // a body that is not JSON, session loss, offline
+  const html = await new Api(async () => ({ ok: false, status: 502, json: async () => { throw new SyntaxError('x'); } })).addEmployees('w1', [{}], false).catch((e) => e);
+  assert.equal(html.status, 502); assert.equal(html.detail, '');
+  let lost = 0;
+  await assert.rejects(new Api(fakeFetch([{ status: 401, body: {} }]), () => { lost += 1; }).addEmployees('w1', [{}], false), (e) => e.status === 401);
+  assert.equal(lost, 1);
+  await assert.rejects(new Api(async () => { throw new TypeError('Failed to fetch'); }).addEmployees('w1', [{}], false), (e) => e.status === 0);
+});
+
+await test('MFA code entry and admin lists use the documented routes', async () => {
+  const f = fakeFetch([{ status: 200, body: { ok: true } }, { status: 200, body: { workspaces: [], system_admin: false } }, { status: 200, body: [] }]);
+  const api = new Api(f); api.csrf = 'tok';
+  await api.mfaVerify('123456'); await api.adminWorkspaces(); await api.adminTeams();
+  assert.deepEqual(f.calls.map((c) => [c.init.method, c.path]), [['POST', '/api/v1/auth/mfa/verify'], ['GET', '/api/v1/admin/workspaces'], ['GET', '/api/v1/admin/teams']]);
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { code: '123456' }); assert.equal(f.calls[0].init.headers['X-CSRF-Token'], 'tok');
+  assert.equal(f.calls[1].init.headers['X-CSRF-Token'], undefined);
 });
 
 console.log(`${passed} passed`);
