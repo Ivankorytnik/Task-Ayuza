@@ -87,7 +87,7 @@ def main():
                     return subprocess.run([sys.executable, '-m', 'alembic', *params],
                         env=migration_env, check=True, capture_output=True, text=True)
                 heads = alembic('heads').stdout.strip()
-                assert heads == '0012_m08_reminders (head)'
+                assert heads == '0013_web_members (head)'
                 alembic('upgrade', 'head')
                 engine = create_engine(urls['migrator'], hide_parameters=True)
                 def snapshot():
@@ -106,7 +106,7 @@ def main():
                 assert tables_now == ['administrative_grants', 'alembic_version', 'audit_events', 'auth_limit_events', 'blocker_events', 'blockers', 'checklist_items', 'comment_revisions', 'comments', 'export_events', 'idempotency_requests', 'labels', 'login_attempts', 'mfa_backup_codes', 'notifications', 'organization', 'outbox_events', 'prelogin_limits', 'project_labels', 'project_members', 'project_stages', 'projects', 'releases', 'risk_blocker_links', 'risk_checks', 'risk_register', 'risk_task_links', 'sessions', 'setup_state', 'system_role_assignments', 'task_access_grants', 'task_dependencies', 'task_events', 'task_labels', 'tasks', 'team_members', 'teams', 'user_mfa', 'users', 'workspace_members', 'workspace_team_access', 'workspace_teams', 'workspaces']
                 assert counts_now == [1 if t == 'alembic_version' else 0 for t in tables_now]
                 with engine.connect() as c:
-                    assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0012_m08_reminders'
+                    assert c.execute(text('SELECT version_num FROM task_ayuza.alembic_version')).scalar_one() == '0013_web_members'
                     drift = compare_metadata(MigrationContext.configure(c, opts={'include_schemas': True, 'version_table_schema': 'task_ayuza'}), Base.metadata)
                     assert drift == [], repr(drift)[:3000]
                 conn.execute(Path('scripts/grant-test.sql').read_text())
