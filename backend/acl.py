@@ -501,6 +501,7 @@ class AclService:
         Each employee gets a temporary password for 24 hours and must change it at first login.
         With dry_run nothing is hashed or written and the per-row report is returned. A report
         with errors means that nothing was created. Passwords are returned only here, once.
+        Everything is checked before the first Argon2id hash; the write transaction checks again.
         """
         wid = as_uuid(workspace_id)
         if not isinstance(dry_run, bool) or not isinstance(rows, list) or not 1 <= len(rows) <= EMPLOYEE_LIMIT:
@@ -511,14 +512,21 @@ class AclService:
             item, found = _parse_employee(row, seen)
             clean.append(item)
             codes.append(found)
-        prepared = []
-        if not dry_run and not any(codes):
-            # Argon2id runs before the transaction, so no row lock is held while hashing.
-            prepared = [prepare_user(row['login'], row['display_name']) for row in clean]
+
+        def check(c, u, s):
+            return _add_employees(c, u, s, wid, clean, codes, [], True, request_id)
+        # First transaction: session, CSRF, fresh MFA, administrator role and every row, without hashing.
+        # Argon2id (64 MiB per password) must never run for a caller who is not allowed to be here.
+        report = self._mutation(token, csrf, check)
+        report['dry_run'] = dry_run
+        if dry_run or not report['ok']:
+            return report
+        # Hashing happens outside any transaction, so no row lock is held meanwhile.
+        prepared = [prepare_user(row['login'], row['display_name']) for row in clean]
 
         def run(c, u, s):
-            return _add_employees(c, u, s, wid, clean, codes, prepared, dry_run, request_id)
-        return self._mutation(token, csrf, run)
+            return _add_employees(c, u, s, wid, clean, codes, prepared, False, request_id)
+        return self._mutation(token, csrf, run)  # checks again: a login may have been taken meanwhile
 
     def set_workspace_team(self, token, csrf, workspace_id, team_id, active=True,
                            expected_version=None, request_id=None):

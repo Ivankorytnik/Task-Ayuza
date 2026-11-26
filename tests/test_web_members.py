@@ -1,11 +1,12 @@
 """WEB-MEMBERS-1: adding employees from the web UI. Synthetic data only, acceptance runner only."""
 import uuid
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.acl import EMPLOYEE_LIMIT, AclError
-from backend.auth import argon2_slot, execute, insert_user, one, prepare_user
+from backend.auth import AuthError, argon2_slot, execute, insert_user, one, prepare_user
 from backend.main import app
 from backend.passwords import verify
 from test_m01_acl import (acl, admin_sql, make_sysadmin, make_workspace_admin, mark_mfa,  # noqa: F401
@@ -212,6 +213,25 @@ def test_unknown_and_ambiguous_team_names(service, acl, migrator, w):
     assert [r['errors'] for r in result['rows']] == [['team_ambiguous'], ['team_unknown'], ['invalid_team']]
 
 
+def test_nothing_is_hashed_before_authorization_and_validation(service, acl, migrator, w):
+    # Argon2id costs 64 MiB per password: it must not run for a caller who may not be here or for a list that fails.
+    participant, no_mfa = person(service), person(service)
+    acl.set_workspace_member(w.admin.token, w.admin.csrf, w.ws, participant.id, 'participant')
+    mark_mfa(migrator, participant)
+    admin_sql(migrator, "INSERT INTO task_ayuza.workspace_members (id, workspace_id, user_id, role) "
+              "VALUES (:id, :w, :u, 'workspace_admin')", id=uuid.uuid4(), w=w.ws, u=no_mfa.id)
+    taken = uniq()
+    add(acl, w.admin, w.ws, [row(taken)])
+    with patch('backend.acl.prepare_user', side_effect=AssertionError('hashed too early')):
+        with pytest.raises(AuthError):
+            acl.add_employees('forged-token', 'forged-csrf', w.ws, [row()])
+        assert status_of(lambda: add(acl, participant, w.ws, [row()])) == 403
+        assert status_of(lambda: add(acl, no_mfa, w.ws, [row()])) == 403
+        assert add(acl, w.admin, w.ws, [row(taken)])['ok'] is False          # a taken login is found without hashing
+        assert add(acl, w.admin, w.ws, [row('a b')])['ok'] is False
+        assert add(acl, w.admin, w.ws, [row()], dry_run=True)['ok'] is True
+
+
 def test_row_limit_and_malformed_requests(service, acl, migrator, w):
     assert EMPLOYEE_LIMIT == 200
     for bad in ([], 'rows', None, [row()] * (EMPLOYEE_LIMIT + 1)):
@@ -298,6 +318,11 @@ def test_http_add_employees(client, service, migrator, w):
     assert client.post(url, json=body, headers={**write(w.admin), 'Origin': 'https://evil.test'}).status_code == 403
     assert client.post(url, json=body, headers={**write(w.admin), 'X-CSRF-Token': 'wrong'}).status_code == 403
     assert client.post(url, json=body).status_code in (401, 403)
+    with patch('backend.acl.prepare_user', side_effect=AssertionError('hashed for an anonymous caller')):
+        forged = {'Origin': ORIGIN, 'X-CSRF-Token': 'forged'}  # the headers are not a secret: only the session is
+        assert client.post(url, json=body, headers=forged).status_code == 401
+        assert client.post(url, json=body, headers={**forged, 'Cookie': '__Host-ay_session=forged'}).status_code == 401
+        assert client.post(url, json=body, headers={**write(w.admin), 'X-CSRF-Token': 'forged'}).status_code == 403
     # roles
     for who, status in ((w.member, 403), (w.outsider, 404)):
         mark_mfa(migrator, who)
