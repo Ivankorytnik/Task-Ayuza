@@ -266,8 +266,8 @@ def clear_mfa(migrator, who):
 
 
 def mfa_marked(migrator, who):
-    return db_rows(migrator, 'SELECT mfa_verified_at FROM task_ayuza.sessions WHERE user_id=:u', u=who.id)[0][
-        'mfa_verified_at'] is not None
+    rows = db_rows(migrator, 'SELECT mfa_verified_at FROM task_ayuza.sessions WHERE user_id=:u', u=who.id)
+    return any(row['mfa_verified_at'] is not None for row in rows)  # a user may hold several sessions, no order
 
 
 def test_http_mfa_verify_accepts_code_and_backup_code_and_rejects_the_rest(client, service, mfa, migrator):
