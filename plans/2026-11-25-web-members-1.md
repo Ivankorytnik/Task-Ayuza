@@ -13,7 +13,7 @@
     - общая функция `insert_user` (её используют и `AuthService.create_user`, и веб);
     - внутренние `_workspace_member` и `_team_member`;
     - метод `AclService.add_employees(token, csrf, workspace_id, rows, dry_run)` под `mfa_mutation`;
-    - миграция `0012` с действием аудита `acl.user_created` (актор-пользователь и сессия, без пароля в снимке).
+    - миграция `0013_web_members` (номер 0012 уже занят M08.1) с действием аудита `acl.user_created` (актор-пользователь и сессия, без пароля в снимке).
   - HTTP-маршруты:
     - `POST /api/v1/auth/mfa/verify` (TOTP или резервный код);
     - `GET /api/v1/admin/workspaces`;
@@ -100,8 +100,11 @@
 |---|---|---|---|
 | 25.11.2026 | План | Issue #181, ветка `web-members-1` от `main` `5e62056` | Фаза 1 |
 | 25.11.2026 | Фаза 1 | Новый тест сначала падал (ImportError, затем ошибка в самом тесте: verify вне `argon2_slot`). После правки полный acceptance-набор в одноразовом контейнере (python:3.13, PostgreSQL 15.20, непривилегированный пользователь): 176 passed, 0 skipped; compileall и `git diff --check` OK. В урезанном наборе (foundation+ops_admin+web_members) `test_operator_bootstrap_to_a_working_workspace` падает: тест зависит от состояния предыдущих файлов, в полном наборе проходит, вне рамок задачи | Фаза 2 |
+| 26.11.2026 | Фазы 2-3 | Draft PR #182. Миграция 0013, `AclService.add_employees`, маршруты `/api/v1/admin/...` и `/api/v1/auth/mfa/verify`. CI: backend 187 passed (было 176), demo и local-stack success | Фаза 4 |
+| 26.11.2026 | Фаза 4 | `parseEmployeeRows` и остальная логика клиента: Node-тесты 37 passed. Раздел «Сотрудники» проверен в headless Chrome на заглушке (MFA, предпросмотр, создание, CSV, скрытие паролей). Сквозной тест `e2e.mjs`: администратор с настоящим TOTP добавляет двух сотрудников, новый входит и меняет пароль | Фаза 5, CI |
+| 26.11.2026 | Фаза 5 | Памятка в `deploy/README.md`. Отклонение: миграция получила номер 0013 вместо 0012 в плане | Ревью и merge по решению владельца |
 
 ## Требует разрешения владельца
-- [ ] push ветки и Draft PR
+- [x] push ветки и Draft PR (разрешено владельцем 26.11.2026)
 - [ ] merge
 - [ ] применение на ноутбуке (deploy)

@@ -15,8 +15,10 @@ from sqlalchemy import create_engine  # noqa: E402
 from backend.acl import AclService  # noqa: E402
 from backend.auth import AuthService, execute  # noqa: E402
 from backend.exports import ExportsService  # noqa: E402
+from backend.mfa import MfaService  # noqa: E402
 from test_m01_acl import Who, _ip, world  # noqa: E402
 from test_m01_auth import PASSWORD, user  # noqa: E402
+from test_m01_mfa_grants import code as totp_code  # noqa: E402
 from test_m02_work import grant, join, new_task  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
@@ -71,6 +73,16 @@ def main():
     join(acl, w, exporter)
     grant(migrator, exporter, w.ws, 'export', w.admin)
     new_task(work, exporter, w, title='Задача экспорта')
+    # a workspace administrator with real TOTP MFA: the browser types the code itself (WEB-MEMBERS-1)
+    mfa = MfaService(service, bytes.fromhex(os.environ['TASK_AYUZA_MFA_KEY']))
+    a_uid, a_login, a_temporary = user(service)
+    a_first = sign_in_as(service, a_login, a_temporary)
+    service.change_password(a_first['token'], a_first['csrf_token'], PASSWORD)
+    a_session = sign_in_as(service, a_login, PASSWORD)
+    enrolled = mfa.enroll(a_session['token'], a_session['csrf_token'])
+    mfa.confirm(a_session['token'], a_session['csrf_token'], totp_code(enrolled['secret']))
+    execute_sql(migrator, "INSERT INTO task_ayuza.workspace_members (id, workspace_id, user_id, role) "
+                          "VALUES (:id, :w, :u, 'workspace_admin')", id=uuid.uuid4(), w=w.ws, u=a_uid)
     for title in ('Синтетическая задача 1', 'Синтетическая задача 2'):
         new_task(work, me, w, title=title)
     # two dated tasks with a dependency for the Gantt connectors (dates are relative to today, so the check does not rot)
@@ -82,7 +94,8 @@ def main():
     print(json.dumps({'login': login, 'password': PASSWORD, 'workspace': str(w.ws),
                       'temp': {'login': t_login, 'temporary': t_temporary, 'new_password': NEW_PASSWORD},
                       'controller': {'login': c_login, 'password': PASSWORD, 'id': str(c_uid)},
-                      'exporter': {'login': x_login, 'password': PASSWORD, 'id': str(x_uid)}}))
+                      'exporter': {'login': x_login, 'password': PASSWORD, 'id': str(x_uid)},
+                      'staff': {'login': a_login, 'password': PASSWORD, 'secret': enrolled['secret']}}))
 
 
 if __name__ == '__main__':

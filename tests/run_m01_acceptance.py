@@ -110,7 +110,7 @@ def main():
                     drift = compare_metadata(MigrationContext.configure(c, opts={'include_schemas': True, 'version_table_schema': 'task_ayuza'}), Base.metadata)
                     assert drift == [], repr(drift)[:3000]
                 conn.execute(Path('scripts/grant-test.sql').read_text())
-                print('A01 PASS: one head (0011); empty tables; repeated upgrade unchanged; metadata matches', flush=True)
+                print('A01 PASS: one head (0013); empty tables; repeated upgrade unchanged; metadata matches', flush=True)
 
                 async def startup(url):
                     os.environ['TASK_AYUZA_DATABASE_URL'] = url
